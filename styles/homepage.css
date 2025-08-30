@@ -1,0 +1,223 @@
+/* Background, includes stuff written to laptop screen*/
+:root {
+    --SCREEN_HEIGHT: 817px;
+    --LAPTOP_SCREEN_WIDTH: 1032px;
+    --LAPTOP_SCREEN_HEIGHT: 871px;
+    --LAPTOP_HEIGHT_OFFSET: 32px;
+    --BACKGROUND_COLOUR: #bfcfed;
+}
+
+/* left/right background colour, visible in widescreens*/
+.bg-laptop-col {
+    display: flex;
+    flex-direction: row;
+    background-color: var(--BACKGROUND_COLOUR);
+    align-items:  center;
+    justify-content: space-between;
+
+    height: 2000px;
+}
+
+/* background filler area, exists just to center laptop screen*/
+.bg-left-col {
+    flex: 1;
+}
+
+.bg-middle-col {
+    flex-shrink: 0;
+    
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-between;
+
+    width: calc(var(--LAPTOP_SCREEN_WIDTH) + 2px);
+    height: 100%;
+}
+
+/* offset area so text doesn't get covered by laptop-top*/
+.bg-middle-top {
+    background-color: lightcoral;
+    flex-grow: 1;
+    width: 100%;
+    height: 33px;      /* default screen offset from top*/
+}
+
+/* where text will be displayed on laptop screen */
+.bg-middle-middle {
+    background-color: black;
+    color: white;
+
+    box-sizing: border-box;
+    padding: 25px;
+
+    width: 100%;
+    height: 100%;
+}
+
+/* background filler area, exists just to center laptop screen*/
+.bg-right-col {
+    flex: 1;
+}
+
+/* Foregound, includes still image of laptop exterior*/
+
+.fg-laptop-side {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+    position: fixed;
+
+    width: auto;
+    height: var(--SCREEN_HEIGHT);
+
+    top: 100px; /* offset down because of header */
+    left: 50%;
+    transform: translateX(-50%);
+}
+
+.fg-laptop-left {
+    background-color: var(--BACKGROUND_COLOUR);
+    flex: 0 0 360px;
+    
+    display: flex;
+    justify-content: flex-end;
+}
+
+.fg-laptop-right {
+    background-color: var(--BACKGROUND_COLOUR);
+    flex: 0 0 358px;
+
+    display: flex;
+    justify-content: flex-start;
+}
+
+.fg-laptop-middle {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    width: var(--LAPTOP_SCREEN_WIDTH);
+    height: var(--LAPTOP_SCREEN_HEIGHT)
+}
+
+.fg-middle-bottom {
+    background-color: var(--BACKGROUND_COLOUR);
+    width: 100%;
+    height: 326px;
+
+}
+
+.fg-middle-top {
+    background-color: var(--BACKGROUND_COLOUR);
+    width: 100%;
+    height: var(--LAPTOP_HEIGHT_OFFSET);
+}
+
+/* set img to orignal pixel dimensions */
+.fg-middle-top img {
+    height: var(--LAPTOP_HEIGHT_OFFSET);
+    width: var(--LAPTOP_SCREEN_WIDTH);
+}
+
+.fg-middle-bottom img {
+    height: 272px;
+    width: var(--LAPTOP_SCREEN_WIDTH);
+}
+
+.top-offset {
+    position: fixed;
+    width: 100%;
+    height: 50px;
+    top: 75px;
+
+    background-color: var(--BACKGROUND_COLOUR);
+}
+
+
+/* laptop screen stuff */
+
+/* list properties */
+.lang-list {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+
+    padding-inline: 25px;
+}
+
+.list-start,
+.list-end,
+.list-comma {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.list-item {
+    display: flex;
+    flex-direction: column;
+}
+
+.item-icon {
+    height: 75px;
+    object-fit: cover;
+}
+
+.item-text {
+    text-align: center;
+}
+
+/* program stuff */
+
+.program-list {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+}
+
+.project-program-1,
+.project-program-2,
+.project-program-3 {
+    margin-left: 10px;
+    margin-right: 10px;
+    margin-bottom: 10px;
+    background-color: lightgrey;
+    border-radius: 10px;
+    border-color: darkblue;
+    border-style: solid;
+
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.project-program-1 {
+    width: 400px;
+}
+
+.project-program-2 {
+    width: 500px;
+    height: 422px;
+}
+
+.program-manager-bar {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+    padding-left: 5px;
+    padding-right: 5px;
+    padding-bottom: 5px;
+
+    background-color: darkblue;
+}
+
+.program-image-1,
+.program-image-2,
+.program-image-3 {
+    width: 100%;
+}
+
+.program-description {
+    background-color: darkgrey;
+    font-size: 18px;
+    height: 100px;
+}
