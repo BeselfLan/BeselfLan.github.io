@@ -211,7 +211,23 @@
                             <h1> > BeselfLan.displayDMOJStats</h1>
 
                             <div class="dmoj-stats">
-                                
+                                 
+                                <script> 
+
+                                    const url = "https://dmoj.ca/api/v2/user/JoePeewee"
+
+                                    fetch(url)
+                                        .then((response) => {
+                                            if (!response.ok) {
+                                                throw new Error("could not fetch resource");
+                                            }
+                                            return console.log(response.json());
+                                        })
+                                        .then(data => console.log(data))
+                                        .catch(error => console.error(error));
+
+                                </script>
+
                             </div>
                         </div>
 
