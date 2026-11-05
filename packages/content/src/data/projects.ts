@@ -198,9 +198,9 @@ export const projects: Entry[] = [
     tech: ["html", "css", "react", "nextjs", "typescript"],
     summary: "This portfolio website, rebuilt as a static Next.js app.",
     bullets: [
-      "A static Next.js export deployed to GitHub Pages.",
+      "A static Next.js export built for GitHub Pages.",
       "An npm workspaces monorepo with a shared content package.",
-      "Zod validation at load, so bad data fails the build.",
+      "Zod validation at load, so bad data fails CI.",
     ],
     links: {
       github: "https://github.com/BeselfLan/BeselfLan.github.io",

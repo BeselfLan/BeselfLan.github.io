@@ -53,9 +53,9 @@ export const experiences: Entry[] = [
     summary:
       "Volunteered at school concerts, setting up the stage and moving equipment.",
     bullets: [
-      "Set up the stage between performances.",
+      "Helped set up the stage between performances.",
       "Split roles with other volunteers to move equipment efficiently.",
-      "Coordinated with supervisors about performance time changes and other issues.",
+      "Communicated with supervisors about performance time changes and other issues.",
     ],
     links: {},
     icon: "/icons/entries/thornhill-concerts.svg",

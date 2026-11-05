@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { bootFlavour, content } from "./index";
 
-const phoneShaped = (s: string): boolean => /(?:\+?\d[\s().-]*){10,}/.test(s);
+const phoneShaped = (s: string): boolean =>
+  /(?:\d[^A-Za-z0-9]{0,3}){9,}\d/.test(s);
 const everything = JSON.stringify({ content, bootFlavour });
 
 // id kind period featured video tech... ("-" for none)
@@ -80,6 +81,9 @@ describe("safety", () => {
     const d = "9".repeat(3);
     expect(phoneShaped("9".repeat(10))).toBe(true);
     expect(phoneShaped([d, d, "9".repeat(4)].join("-"))).toBe(true);
+    for (const sep of ["/", "_", "–"]) {
+      expect(phoneShaped([d, d, "9".repeat(4)].join(sep))).toBe(true);
+    }
     expect(phoneShaped("2021-2024")).toBe(false);
   });
 
@@ -88,15 +92,17 @@ describe("safety", () => {
   });
 
   it("RISC-V never appears", () => {
-    expect(everything).not.toMatch(/risc-?v/i);
+    expect(everything).not.toMatch(/risc\W?v/i);
   });
 
-  it("the unmeasured 15x claim never appears", () => {
-    expect(everything).not.toMatch(/\b15\s*x\b|\bx\s*15\b/i);
+  it("the unmeasured 15x and 16x claims never appear", () => {
+    expect(everything).not.toMatch(
+      /\b(?:15|16)\s*(?:x\b|×)|(?:\bx|×)\s*(?:15|16)\b/i,
+    );
   });
 
   const trivia = content.entries.find((e) => e.id === "trivia-knockouts");
   it.skipIf(!trivia)("trivia makes no parallel claim", () => {
-    expect(JSON.stringify(trivia)).not.toMatch(/parallel/i);
+    expect(JSON.stringify(trivia)).not.toMatch(/parallel|concurren/i);
   });
 });
