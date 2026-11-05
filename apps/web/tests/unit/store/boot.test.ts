@@ -260,6 +260,51 @@ describe("hand-offs from the stage table", () => {
       "desktop",
     ]);
   });
+
+  it("named actions enter through the table", () => {
+    const entered: [string, BootMode][] = [];
+    const table = tableWith(() => (ctx) => {
+      entered.push([boot().stage, ctx.mode]);
+    });
+    const actions = createBootActions(useOS, table);
+    actions.start("fast");
+    walkTo("firmware", actions);
+    actions.skip();
+    walkTo("desktop", actions);
+    actions.restart();
+    walkTo("desktop", actions);
+    actions.shutdown();
+    walkTo("off", actions);
+    actions.powerOn();
+    expect(entered).toEqual([
+      ["lid-opening", "fast"],
+      ["power-on", "fast"],
+      ["firmware", "fast"],
+      ["desktop-enter", "fast"],
+      ["desktop", "fast"],
+      ["restarting", "full"],
+      ["power-on", "full"],
+      ["firmware", "full"],
+      ["boot-log", "full"],
+      ["desktop-enter", "full"],
+      ["desktop", "full"],
+      ["shutting-down", "full"],
+      ["off", "full"],
+      ["lid-opening", "full"],
+    ]);
+  });
+
+  it("powerOn is ignored unless the machine is off", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1000);
+    os.boot.start("fast");
+    walkTo("desktop");
+    os.boot.setLineIndex(3);
+    vi.setSystemTime(5000);
+    const snapshot = boot();
+    os.boot.powerOn();
+    expect(boot()).toEqual(snapshot);
+  });
 });
 
 describe("other behaviour", () => {
