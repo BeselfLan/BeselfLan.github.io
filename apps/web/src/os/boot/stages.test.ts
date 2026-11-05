@@ -4,6 +4,7 @@ import {
   bootMachine,
   createStageMachine,
   type BootMode,
+  type BootStage,
   type StageContext,
   type StageDef,
 } from "./stages";
@@ -76,7 +77,19 @@ describe("durations", () => {
   });
 
   it("boot-log uses bootLogMs in full", () => {
-    expect(bootMachine.durationFor("boot-log", ctx("full"))).toBe(2400);
+    const c = ctx("full", { bootLogMs: 1234 });
+    expect(bootMachine.durationFor("boot-log", c)).toBe(1234);
+  });
+
+  it.each([
+    ["lid-opening", 0],
+    ["power-on", 0],
+    ["firmware", 0],
+    ["boot-log", 0],
+    ["login", null],
+    ["desktop-enter", 400],
+  ] as const)("%s is %s in fast", (stage, ms) => {
+    expect(bootMachine.durationFor(stage, ctx("fast"))).toBe(ms);
   });
 
   it.each(["full", "fast", "skip"] as const)(
@@ -151,6 +164,16 @@ describe("events", () => {
   it("invalid events return null", () => {
     expect(bootMachine.stageForEvent("skip", "power-on")).toBeNull();
     expect(bootMachine.stageForEvent("shutdown", "firmware")).toBeNull();
+  });
+
+  it("skip and restart are valid only from their listed stages", () => {
+    for (const stage of Object.keys(BOOT_STAGES) as BootStage[]) {
+      const canSkip = stage === "firmware" || stage === "boot-log";
+      expect(bootMachine.stageForEvent("skip", stage) !== null).toBe(canSkip);
+      expect(bootMachine.stageForEvent("restart", stage) !== null).toBe(
+        stage === "desktop",
+      );
+    }
   });
 });
 
