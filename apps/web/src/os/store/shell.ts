@@ -42,7 +42,8 @@ export function createShellActions(api: OSApi) {
     },
     openContextMenu(x: number, y: number, items: readonly unknown[]): void {
       api.setState((s) => {
-        // Copied so immer freezes our array, not the caller's.
+        // The array is copied, but immer still deep-freezes the item objects
+        // the caller passed in, so callers must not mutate them afterwards.
         s.shell.contextMenu = { x, y, items: [...items] };
       });
     },

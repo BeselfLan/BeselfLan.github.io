@@ -63,9 +63,11 @@ describe("settings persistence", () => {
     expect(stored().state.settings.wallpaper).toBe("mono");
     rehydrateSettings();
     expect(useOS.getState().settings.wallpaper).toBe("mono");
+    expect(useOS.getState().notifications.items).toHaveLength(1);
   });
 
   it("writes only when settings change", async () => {
+    seed({ wallpaper: "mono" });
     const { os, rehydrateSettings } = await load();
     rehydrateSettings();
     const setItem = vi.spyOn(Storage.prototype, "setItem");
@@ -131,6 +133,7 @@ describe("settings persistence", () => {
     plant();
     const { os, useOS, rehydrateSettings } = await load();
     expect(() => rehydrateSettings()).not.toThrow();
+    expect(useOS.persist.hasHydrated()).toBe(true);
     expect(useOS.getState().settings.wallpaper).toBe("aubergine");
     os.settings.update({ wallpaper: "mono" });
     expect(stored().state.settings.wallpaper).toBe("mono");
