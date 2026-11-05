@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { devtools, persist } from "zustand/middleware";
 import { immer } from "zustand/middleware/immer";
+import { BOOT_STAGES } from "../boot/stages";
 import {
   createNotificationActions,
   initialNotifications,
@@ -14,6 +15,7 @@ import {
   SETTINGS_KEY,
   type Settings,
 } from "./settings";
+import { createBootActions, initialBoot, type BootState } from "./boot";
 import { createShellActions, initialShell, type ShellState } from "./shell";
 
 // A new slice is one new file plus one line in each of three lists:
@@ -22,12 +24,14 @@ export interface OSState {
   settings: Settings;
   shell: ShellState;
   notifications: NotificationState;
+  boot: BootState;
 }
 
 const initialState: OSState = {
   settings: defaultSettings,
   shell: initialShell,
   notifications: initialNotifications,
+  boot: initialBoot,
 };
 
 const { storage, arm } = createSettingsStorage();
@@ -76,6 +80,7 @@ export const os = {
   settings: createSettingsActions(useOS),
   shell: createShellActions(useOS),
   notifications: createNotificationActions(useOS),
+  boot: createBootActions(useOS, BOOT_STAGES),
 };
 
 /** Loads stored settings into the store. Call once on the client, after mount. */
