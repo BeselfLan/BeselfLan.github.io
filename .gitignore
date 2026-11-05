@@ -1,0 +1,17 @@
+node_modules/
+.next/
+out/
+media-src/
+apps/api/media/
+.env*
+!.env.example
+playwright-report/
+test-results/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+.claude/worktrees/
+.agents/
+info.txt
+plan.txt
+prompt.txt

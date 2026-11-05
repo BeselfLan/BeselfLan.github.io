@@ -1,0 +1,47 @@
+{
+  "lead": [
+    "package.json", "package-lock.json", ".nvmrc", ".editorconfig", ".gitignore", ".prettierrc.json",
+    "apps/*/package.json", "packages/*/package.json", ".github/**",
+    "apps/web/*", "apps/web/public/.nojekyll",
+    "apps/web/src/app/**", "apps/web/src/apps/**", "apps/web/src/content/**", "apps/web/src/lib/**",
+    "apps/web/src/media/provider.ts",
+    "apps/web/src/os/apps/**", "apps/web/src/os/input/**", "apps/web/src/os/store/**",
+    "apps/web/src/os/ui/**", "apps/web/src/os/window/**", "apps/web/src/os/screen/Screen.tsx",
+    "apps/web/src/os/boot/BootSequence.tsx", "apps/web/src/os/desktop/Desktop.tsx",
+    "apps/web/src/os/screen/Laptop.tsx",
+    "apps/web/tests/setup.ts", "apps/web/tests/unit/**",
+    "apps/web/tests/e2e/smoke.spec.ts", "apps/web/tests/e2e/window.spec.ts",
+    "packages/content/*", "packages/content/src/schema.ts", "packages/content/src/index.ts",
+    "packages/content/src/*.test.ts", "packages/content/src/data/**",
+    "scripts/new-app.ts", "scripts/check-ownership.ts", "scripts/gh/**",
+    "docs/decisions/**", "docs/APPS.md", "docs/DEPLOY.md", "docs/OWNERSHIP.json"
+  ],
+  "content": [
+    "packages/content/src/data/**", "packages/content/src/content.test.ts", "docs/CONTENT.md",
+    "apps/web/src/apps/about/**", "apps/web/tests/e2e/about.spec.ts"
+  ],
+  "shell-boot": [
+    "apps/web/src/os/boot/**", "apps/web/src/os/screen/Laptop.tsx", "apps/web/tests/e2e/boot.spec.ts"
+  ],
+  "shell-desktop": [
+    "apps/web/src/os/desktop/**", "apps/web/public/wallpapers/**", "apps/web/public/icons/apps/**",
+    "apps/web/tests/e2e/desktop.spec.ts"
+  ],
+  "app-projects": [
+    "apps/web/src/apps/projects/**", "apps/web/src/apps/video-player/**", "apps/web/src/media/**",
+    "apps/web/public/icons/entries/**", "apps/web/public/media/**", "apps/web/tests/e2e/projects.spec.ts"
+  ],
+  "app-skills": [
+    "apps/web/src/apps/skills/**", "apps/web/public/icons/skills/**", "apps/web/tests/e2e/skills.spec.ts"
+  ],
+  "backend-infra": [
+    "apps/api/**", "deploy/**", "scripts/media/**", ".github/workflows/api.yml",
+    "apps/web/Dockerfile", "apps/web/.dockerignore", "docs/DEPLOY.md", "package-lock.json"
+  ],
+  "qa-docs": [
+    "apps/web/tests/e2e/integration.spec.ts", "apps/web/src/app/layout.tsx", "README.md", "docs/*.md",
+    "lighthouserc.*"
+  ],
+  "a11y-mobile": ["apps/web/tests/e2e/a11y.spec.ts", "apps/web/tests/e2e/mobile.spec.ts"],
+  "perf-seo": ["apps/web/public/og.png"]
+}
