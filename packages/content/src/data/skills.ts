@@ -31,7 +31,7 @@ export const skills: Skill[] = [
     "language",
     "#3776AB",
     "Python is a general-purpose programming language known for readable syntax. It is widely used for scripting, data analysis and machine learning.",
-    "I used Python for the 30+ tests of Bash Terminal Recreation and for the Trivia Game question generator. I also wrote Painting Prediction, the EmberHacks AI Study Helper and the UTMIST AI^2 Hackathon bot in it.",
+    "I used Python for the 30+ tests of Bash Terminal Recreation and for the Trivia Game question generator. I also used it for Painting Prediction, the EmberHacks AI Study Helper and the UTMIST AI^2 Hackathon.",
   ),
   skill(
     "java",
