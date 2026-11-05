@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { bootFlavour, content } from "./index";
+import { bootFlavour, content, skillsWithUsage } from "./index";
 
 const phoneShaped = (s: string): boolean =>
-  /(?:\d[^A-Za-z0-9]{0,3}){9,}\d/.test(s);
+  /(?:\+?\d[\s().-]*){10,}|(?:\d[^A-Za-z0-9]{0,3}){9,}\d/.test(s);
 const everything = JSON.stringify({ content, bootFlavour });
 
 // id kind period featured video tech... ("-" for none)
@@ -76,6 +76,155 @@ describe("entry inventory (Appendix A.1)", () => {
   });
 });
 
+const SKILLS = {
+  language:
+    "python java mips-asm c cpp sql typescript javascript html css r csharp",
+  framework: "react nextjs express nodejs unity remotion partykit",
+  library:
+    "numpy pandas pytorch scikit-learn opencv mediapipe dexie java-swing gemini-api",
+  tool: "git github bash vscode intellij pycharm eclipse ssh docker valgrind postgresql nginx caddy posix excel powerpoint sharepoint",
+  practice: "oop agile rest-api oauth-jwt",
+};
+// Not in any entry's tech list, but a source ties them to an entry.
+const LINKED = "sql nginx rest-api oauth-jwt bash oop".split(" ");
+// Nothing in the sources beyond the name.
+const UNSOURCED =
+  "r vscode intellij pycharm eclipse ssh excel powerpoint sharepoint agile".split(
+    " ",
+  );
+
+const shortTitle = (title: string): string =>
+  title.split(/ --| \(| in | for | with /)[0].toLowerCase();
+const sentences = (s: string): number => s.trim().split(/(?<=[.!?])\s+/).length;
+const FIRST_PERSON = /\b(I|my)\b/;
+const allShortTitles = content.entries.map((e) => shortTitle(e.title));
+
+describe("skills", () => {
+  const usage = skillsWithUsage();
+
+  it.each(Object.entries(SKILLS))(
+    "has exactly the listed %s skills",
+    (category, ids) => {
+      const actual = content.skills
+        .filter((s) => s.category === category)
+        .map((s) => s.id)
+        .sort();
+      expect(actual).toEqual(ids.split(" ").sort());
+    },
+  );
+
+  it("has 49 skills with unique ids", () => {
+    const ids = content.skills.map((s) => s.id);
+    expect(ids).toHaveLength(49);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("every tech id is a skill", () => {
+    const ids = new Set(content.skills.map((s) => s.id));
+    for (const e of content.entries) {
+      for (const t of e.tech) expect(ids.has(t), `${e.id}: ${t}`).toBe(true);
+    }
+  });
+
+  it("exactly these 16 skills have no entry", () => {
+    const unused = usage
+      .filter((s) => s.usedIn.length === 0)
+      .map((s) => s.id)
+      .sort();
+    expect(unused).toEqual([...LINKED, ...UNSOURCED].sort());
+  });
+
+  it("every skill is used or described", () => {
+    for (const s of usage) {
+      expect(s.usedIn.length > 0 || s.howIUsedIt.trim() !== "", s.id).toBe(
+        true,
+      );
+    }
+  });
+
+  it("descriptions are neutral and short", () => {
+    for (const s of content.skills) {
+      expect(sentences(s.description), s.id).toBeLessThanOrEqual(2);
+      expect(s.description, s.id).not.toMatch(/\b(I|my|me|we)\b/);
+    }
+  });
+
+  it("used skills say how and name an entry that uses them", () => {
+    const used = usage.filter((s) => s.usedIn.length > 0);
+    expect(used).toHaveLength(33);
+    for (const s of used) {
+      const copy = s.howIUsedIt.toLowerCase();
+      expect(s.howIUsedIt, s.id).toMatch(FIRST_PERSON);
+      expect(sentences(s.howIUsedIt), s.id).toBeGreaterThanOrEqual(2);
+      expect(sentences(s.howIUsedIt), s.id).toBeLessThanOrEqual(3);
+      expect(
+        s.usedIn.some((e) => copy.includes(shortTitle(e.title))),
+        s.id,
+      ).toBe(true);
+    }
+  });
+
+  it("linked skills name their entry", () => {
+    const entryFor: Record<string, string> = {
+      sql: "full-stack todo list",
+      nginx: "full-stack todo list",
+      "rest-api": "full-stack todo list",
+      "oauth-jwt": "full-stack todo list",
+      bash: "bash terminal recreation",
+      oop: "deadknight",
+    };
+    for (const id of LINKED) {
+      const s = content.skills.find((x) => x.id === id);
+      expect(s?.howIUsedIt.toLowerCase(), id).toContain(entryFor[id]);
+      expect(s?.howIUsedIt, id).toMatch(FIRST_PERSON);
+    }
+  });
+
+  it("unsourced skills stay honest", () => {
+    for (const id of UNSOURCED) {
+      const s = content.skills.find((x) => x.id === id);
+      const copy = s?.howIUsedIt ?? "";
+      expect(sentences(copy), id).toBe(1);
+      expect(copy, id).toMatch(FIRST_PERSON);
+      for (const t of allShortTitles) {
+        expect(copy.toLowerCase(), `${id}: ${t}`).not.toContain(t);
+      }
+    }
+  });
+
+  it("mips-asm says MIPS", () => {
+    const s = content.skills.find((x) => x.id === "mips-asm");
+    expect(s?.name).toBe("MIPS Assembly");
+    expect(s?.description).toMatch(/MIPS/);
+    expect(s?.howIUsedIt).toMatch(/MIPS/);
+  });
+
+  it("icons follow the id", () => {
+    for (const s of content.skills) {
+      expect(s.icon).toBe(`/icons/skills/${s.id}.svg`);
+    }
+  });
+
+  it("level and since stay unset", () => {
+    for (const s of content.skills) {
+      expect(s.level, s.id).toBeUndefined();
+      expect(s.since, s.id).toBeUndefined();
+    }
+  });
+
+  it("copy about this website claims nothing unshipped", () => {
+    const about = content.skills.filter((s) =>
+      s.howIUsedIt.toLowerCase().includes("this website"),
+    );
+    expect(about.length).toBeGreaterThan(0);
+    for (const s of about) {
+      expect(s.howIUsedIt, s.id).not.toMatch(
+        /\b(laptop|boot|desktop|dock|windows?|carousel|deployed|live|fails the build|will)\b/i,
+      );
+    }
+  });
+});
+
 describe("safety", () => {
   it("detector works on values built at runtime", () => {
     const d = "9".repeat(3);
@@ -84,6 +233,8 @@ describe("safety", () => {
     for (const sep of ["/", "_", "–"]) {
       expect(phoneShaped([d, d, "9".repeat(4)].join(sep))).toBe(true);
     }
+    // Wide spacing: only the first alternative catches it.
+    expect(phoneShaped([d, d, "9".repeat(4)].join("    "))).toBe(true);
     expect(phoneShaped("2021-2024")).toBe(false);
   });
 
