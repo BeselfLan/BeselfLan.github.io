@@ -39,8 +39,10 @@ const profile = {
   summary: [],
   spokenLanguages: [],
 };
-const ok = (s: { safeParse: (v: unknown) => { success: boolean } }, v: unknown) =>
-  s.safeParse(v).success;
+const ok = (
+  s: { safeParse: (v: unknown) => { success: boolean } },
+  v: unknown,
+) => s.safeParse(v).success;
 const withEntry = (o: object) => ({ ...entry, ...o });
 
 describe("EntrySchema", () => {
@@ -71,8 +73,12 @@ describe("EntrySchema", () => {
     ["unknown start", { period: { start: "unknown" } }],
     ["empty bullets", { bullets: [] }],
   ])("%s passes unfeatured and fails featured", (_n, patch) => {
-    expect(ok(EntrySchema, withEntry({ ...patch, featured: false }))).toBe(true);
-    expect(ok(EntrySchema, withEntry({ ...patch, featured: true }))).toBe(false);
+    expect(ok(EntrySchema, withEntry({ ...patch, featured: false }))).toBe(
+      true,
+    );
+    expect(ok(EntrySchema, withEntry({ ...patch, featured: true }))).toBe(
+      false,
+    );
   });
 });
 
