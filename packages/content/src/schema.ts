@@ -158,6 +158,14 @@ export type MediaManifestEntry = z.infer<typeof MediaManifestEntrySchema>;
 export const MediaManifestSchema = z.array(MediaManifestEntrySchema);
 export type MediaManifest = z.infer<typeof MediaManifestSchema>;
 
-export const ContentSchema = z.object({});
+export const ContentSchema = z.strictObject({
+  profile: ProfileSchema,
+  entries: z.array(EntrySchema),
+  education: z.array(EducationSchema),
+  courses: z.array(CourseSchema),
+  skills: z.array(SkillSchema),
+  hobbies: z.array(HobbySchema),
+  certifications: z.array(CertificationSchema),
+});
 
 export type Content = z.infer<typeof ContentSchema>;
