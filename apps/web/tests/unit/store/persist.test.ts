@@ -80,6 +80,17 @@ describe("settings persistence", () => {
     expect(setItem).toHaveBeenCalledTimes(1);
   });
 
+  it("a first visit writes nothing until settings change", async () => {
+    const { os, rehydrateSettings } = await load();
+    rehydrateSettings();
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    os.notifications.push({ title: "x" });
+    os.shell.setActivitiesOpen(true);
+    expect(setItem).toHaveBeenCalledTimes(0);
+    os.settings.update({ wallpaper: "orange" });
+    expect(setItem).toHaveBeenCalledTimes(1);
+  });
+
   it("stores settings alone", async () => {
     const { os, rehydrateSettings } = await load();
     rehydrateSettings();

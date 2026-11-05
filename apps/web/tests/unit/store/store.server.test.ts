@@ -7,10 +7,13 @@ describe("store on the server", () => {
     const error = vi.spyOn(console, "error");
     expect(typeof window).toBe("undefined");
     const { os, useOS, rehydrateSettings } = await import("@/os/store");
+    // A real server never rehydrates, so writes are still disarmed here.
+    os.notifications.push({ title: "before" });
+    os.settings.update({ wallpaper: "orange" });
     expect(() => rehydrateSettings()).not.toThrow();
     os.notifications.push({ title: "x" });
     os.settings.update({ wallpaper: "mono" });
-    expect(useOS.getState().notifications.items).toHaveLength(1);
+    expect(useOS.getState().notifications.items).toHaveLength(2);
     expect(useOS.getState().settings.wallpaper).toBe("mono");
     expect(warn).not.toHaveBeenCalled();
     expect(error).not.toHaveBeenCalled();
