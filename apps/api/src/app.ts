@@ -20,7 +20,12 @@ export function createApp(deps: AppDeps): express.Express {
   const readManifest =
     deps.readManifest ?? (() => loadManifest(config.MEDIA_DIR));
   const app = express();
-  app.use(pinoHttp({ level: deps.logLevel ?? "info" }));
+  app.use(
+    pinoHttp({
+      level: deps.logLevel ?? "info",
+      redact: ["req.headers.authorization", "req.headers.cookie"],
+    }),
+  );
   app.use(helmet());
   app.use(corsMiddleware(config.CORS_ORIGINS));
   app.use(healthRouter({ version, readManifest }));

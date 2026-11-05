@@ -99,4 +99,18 @@ describe("built server", () => {
     expect(code).not.toBe(0);
     expect(code).not.toBeNull();
   }, 60_000);
+
+  it("stops when the port is taken", async () => {
+    const holder = createServer();
+    await new Promise<void>((resolve) => holder.listen(0, resolve));
+    const address = holder.address();
+    const port = typeof address === "object" && address ? address.port : 0;
+    const child = start(dirWithManifest([]), port);
+    const code = await new Promise<number | null>((resolve) => {
+      child.once("exit", resolve);
+    });
+    holder.close();
+    expect(code).not.toBe(0);
+    expect(code).not.toBeNull();
+  }, 60_000);
 });

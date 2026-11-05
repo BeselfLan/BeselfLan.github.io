@@ -7,6 +7,8 @@ const config = loadConfig(process.env);
 await loadManifest(config.MEDIA_DIR);
 
 const app = createApp({ config, version: readVersion(import.meta.dirname) });
-app.listen(config.PORT, () => {
+app.listen(config.PORT, (err) => {
+  // Express 5 hands listen errors to this callback instead of raising them.
+  if (err) throw err;
   console.info(`api listening on ${config.PORT}`);
 });
