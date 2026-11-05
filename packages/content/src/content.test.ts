@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { bootFlavour, content } from "./index";
 
 const phoneShaped = (s: string): boolean =>
-  /(?:\d[^A-Za-z0-9]{0,3}){9,}\d/.test(s);
+  /(?:\+?\d[\s().-]*){10,}|(?:\d[^A-Za-z0-9]{0,3}){9,}\d/.test(s);
 const everything = JSON.stringify({ content, bootFlavour });
 
 // id kind period featured video tech... ("-" for none)
@@ -84,6 +84,8 @@ describe("safety", () => {
     for (const sep of ["/", "_", "–"]) {
       expect(phoneShaped([d, d, "9".repeat(4)].join(sep))).toBe(true);
     }
+    // Wide spacing: only the first alternative catches it.
+    expect(phoneShaped([d, d, "9".repeat(4)].join("    "))).toBe(true);
     expect(phoneShaped("2021-2024")).toBe(false);
   });
 
