@@ -1,26 +1,39 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --os-orange: #e95420;
+  --os-aubergine: #772953;
+  --os-dark: #2c001e;
+  --os-panel: #1e1e1e;
+  --os-panel-fg: #f7f7f7;
+  --os-accent: var(--os-orange);
+  --os-radius-sm: 6px;
+  --os-radius-md: 8px;
+  --os-radius-lg: 12px;
+  --os-shadow-window: 0 8px 24px rgb(0 0 0 / 0.45);
+  --os-shadow-popover: 0 4px 12px rgb(0 0 0 / 0.35);
+  --top-bar-h: 32px;
+  --dock-w: 64px;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-os-orange: var(--os-orange);
+  --color-os-aubergine: var(--os-aubergine);
+  --color-os-dark: var(--os-dark);
+  --color-os-panel: var(--os-panel);
+  --color-os-panel-fg: var(--os-panel-fg);
+  --color-os-accent: var(--os-accent);
+  --radius-os-sm: var(--os-radius-sm);
+  --radius-os-md: var(--os-radius-md);
+  --radius-os-lg: var(--os-radius-lg);
+  --shadow-os-window: var(--os-shadow-window);
+  --shadow-os-popover: var(--os-shadow-popover);
+  --spacing-top-bar: var(--top-bar-h);
+  --spacing-dock: var(--dock-w);
+  --font-sans: var(--font-ui);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--os-dark);
+  color: var(--os-panel-fg);
 }
