@@ -62,12 +62,12 @@ export function skillsWithUsage(source: Content = content): SkillWithUsage[] {
 }
 
 export interface BootGroups {
-  projects: Entry[];
-  hackathons: Entry[];
-  experience: Entry[];
+  projects: Entry[]; // kinds project + competition
+  hackathons: Entry[]; // kind hackathon
+  experience: Entry[]; // kinds experience + volunteer
   education: Education[];
-  languages: Skill[];
-  skills: Skill[];
+  languages: Skill[]; // category language
+  skills: Skill[]; // framework, library, tool, practice, in that order
   hobbies: Hobby[];
 }
 

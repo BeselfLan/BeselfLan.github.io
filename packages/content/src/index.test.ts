@@ -37,6 +37,7 @@ const mkSkill = (id: string, o: Partial<Skill> = {}): Skill => ({
 const fixture: Content = {
   profile: content.profile,
   entries: [
+    mkEntry("z", { order: 6, featured: true }),
     mkEntry("b", { order: 2, tech: ["c", "ts", "ghost"] }),
     mkEntry("a", { order: 1, tech: ["c"], featured: true }),
     mkEntry("f", { order: 0, kind: "hackathon", featured: true }),
@@ -118,7 +119,7 @@ describe("skillsWithUsage", () => {
 
 describe("featuredEntries and entriesByKind", () => {
   it("filters featured and sorts by order", () => {
-    expect(ids(featuredEntries(fixture))).toEqual(["f", "a"]);
+    expect(ids(featuredEntries(fixture))).toEqual(["f", "a", "z"]);
   });
   it("returns all five kinds", () => {
     const g = entriesByKind(fixture);
@@ -129,7 +130,7 @@ describe("featuredEntries and entriesByKind", () => {
       "project",
       "volunteer",
     ]);
-    expect(ids(g.project)).toEqual(["a", "b"]);
+    expect(ids(g.project)).toEqual(["a", "b", "z"]);
     expect(g.experience).toEqual([]);
   });
   it("run with no arguments", () => {
@@ -144,12 +145,12 @@ describe("bootGroups", () => {
     const entryIds = [...g.projects, ...g.hackathons, ...g.experience].map(
       (e) => e.id,
     );
-    expect(entryIds.sort()).toEqual(["a", "b", "comp", "f", "job"]);
+    expect(entryIds.sort()).toEqual(["a", "b", "comp", "f", "job", "z"]);
     const skillIds = [...g.languages, ...g.skills].map((s) => s.id);
     expect(skillIds.sort()).toEqual(ids(fixture.skills).sort());
   });
   it("sorts featured first and keeps practice skills", () => {
-    expect(ids(g.projects)).toEqual(["a", "b", "comp"]);
+    expect(ids(g.projects)).toEqual(["a", "z", "b", "comp"]);
     expect(ids(g.skills)).toEqual(["react", "git", "tdd"]);
   });
   it("lists an entry sharing a hobby id only under hobbies", () => {
