@@ -109,4 +109,21 @@ describe("media routes", () => {
       .set("Origin", "https://a.test");
     expect(res.headers["access-control-allow-origin"]).toBe("https://a.test");
   });
+
+  it("a malformed escape in the id is a 400, not a logged 500", async () => {
+    const lines: string[] = [];
+    const a = makeApp(
+      { MEDIA_DIR: dir },
+      { logLevel: "info", logStream: { write: (m) => void lines.push(m) } },
+    );
+    const res = await request(a).get("/api/media/%E0%A4%A");
+    expect(res.status).toBe(400);
+    expect(res.headers["content-type"]).toMatch(/json/);
+    expect(res.body).toEqual({
+      error: { code: "bad_request", message: "Bad request" },
+    });
+    expect(lines.length).toBeGreaterThan(0);
+    // pino level 50 is error.
+    for (const line of lines) expect(JSON.parse(line).level).toBeLessThan(50);
+  });
 });

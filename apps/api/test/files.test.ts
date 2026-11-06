@@ -69,6 +69,19 @@ describe("file fallback", () => {
     if (status === 416) expect(res.headers["content-range"]).toBe("bytes */10");
   });
 
+  it("an index file and a dotfile are not served", async () => {
+    writeFileSync(join(tmp, "mid/media/sub/index.html"), "index-marker");
+    writeFileSync(join(tmp, "mid/media/.env"), "dotfile-marker");
+    const a = app(true);
+    for (const path of ["sub/", ".env"]) {
+      const res = await request(a).get(`/media/files/${path}`);
+      expect(res.status).toBe(404);
+      expect(res.headers["content-type"]).toMatch(/json/);
+      expect(res.text).not.toContain("index-marker");
+      expect(res.text).not.toContain("dotfile-marker");
+    }
+  });
+
   it("a directory is a JSON 404", async () => {
     const res = await request(app(true)).get("/media/files/sub");
     expect(res.status).toBe(404);
