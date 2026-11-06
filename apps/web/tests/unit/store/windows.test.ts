@@ -56,6 +56,7 @@ afterEach(() => {
 describe("shape", () => {
   it("action list", () => {
     expect(Object.keys(os.windows).sort()).toEqual([
+      "closeWindow",
       "cycleFocus",
       "focusWindow",
       "minimizeAll",
@@ -66,6 +67,7 @@ describe("shape", () => {
       "setAppLookup",
       "setScreen",
       "setTitle",
+      "toggleMaximize",
     ]);
   });
 
@@ -578,5 +580,284 @@ describe("cycleFocus", () => {
     const before = wins();
     os.windows.cycleFocus(1);
     expect(wins()).toBe(before);
+  });
+});
+
+describe("closeWindow", () => {
+  const deferred = () => {
+    let resolve!: (v: boolean) => void;
+    const promise = new Promise<boolean>((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  };
+  const has = (id: string) => wins().items.some((w) => w.id === id);
+
+  it("close removes the window", async () => {
+    register(def("a"), def("b"));
+    os.windows.openApp("a");
+    os.windows.openApp("b");
+    await os.windows.closeWindow("b");
+    expect(has("b")).toBe(false);
+    expect(focusedId()).toBe("a");
+    expect(isAppRunning(useOS.getState(), "b")).toBe(false);
+  });
+
+  it("with no hook it closes synchronously", () => {
+    register(def("a"));
+    os.windows.openApp("a");
+    void os.windows.closeWindow("a");
+    expect(has("a")).toBe(false);
+  });
+
+  it.each([
+    ["sync", () => false],
+    ["async", () => Promise.resolve(false)],
+  ])("the hook can refuse: %s", async (_n, onBeforeClose) => {
+    register(def("a", { onBeforeClose }));
+    os.windows.openApp("a");
+    await os.windows.closeWindow("a");
+    expect(has("a")).toBe(true);
+  });
+
+  it("the hook is awaited", async () => {
+    const d = deferred();
+    register(def("a", { onBeforeClose: () => d.promise }));
+    os.windows.openApp("a");
+    const done = os.windows.closeWindow("a");
+    expect(has("a")).toBe(true);
+    d.resolve(true);
+    await done;
+    expect(has("a")).toBe(false);
+  });
+
+  it("the hook gets the window", async () => {
+    const hook = vi.fn(() => true);
+    register(keyed("viewer", { onBeforeClose: hook }));
+    os.windows.openApp("viewer", { k: "x" });
+    await os.windows.closeWindow("viewer:x");
+    expect(hook).toHaveBeenCalledWith({
+      windowId: "viewer:x",
+      args: { k: "x" },
+    });
+  });
+
+  it("a second close while one is pending asks once", async () => {
+    const d = deferred();
+    const hook = vi.fn(() => d.promise);
+    register(def("a", { onBeforeClose: hook }));
+    os.windows.openApp("a");
+    const first = os.windows.closeWindow("a");
+    const second = os.windows.closeWindow("a");
+    d.resolve(true);
+    await Promise.all([first, second]);
+    expect(hook).toHaveBeenCalledTimes(1);
+    expect(has("a")).toBe(false);
+  });
+
+  it("a refused close can be asked again", async () => {
+    const hook = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
+    register(def("a", { onBeforeClose: hook }));
+    os.windows.openApp("a");
+    await os.windows.closeWindow("a");
+    expect(has("a")).toBe(true);
+    await os.windows.closeWindow("a");
+    expect(has("a")).toBe(false);
+    expect(hook).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    [
+      "throw",
+      () => {
+        throw new Error("broken");
+      },
+    ],
+    ["reject", () => Promise.reject(new Error("broken"))],
+  ])("a failing hook still closes: %s", async (_n, onBeforeClose) => {
+    register(def("a", { onBeforeClose }));
+    os.windows.openApp("a");
+    await expect(os.windows.closeWindow("a")).resolves.toBeUndefined();
+    expect(has("a")).toBe(false);
+  });
+});
+
+describe("maximise", () => {
+  const capable = () =>
+    register(def("a", { capabilities: { maximize: true } }));
+
+  it("toggleMaximize is a no-op without the capability", () => {
+    register(def("a"));
+    os.windows.openApp("a");
+    const before = wins();
+    os.windows.toggleMaximize("a");
+    expect(wins()).toBe(before);
+  });
+
+  it("toggleMaximize flips with the capability", () => {
+    capable();
+    os.windows.openApp("a");
+    const { position, size } = win("a");
+    os.windows.toggleMaximize("a");
+    expect(win("a").maximized).toBe(true);
+    os.windows.toggleMaximize("a");
+    expect(win("a").maximized).toBe(false);
+    expect(win("a").position).toEqual(position);
+    expect(win("a").size).toEqual(size);
+  });
+
+  it("minimise and restore keep maximized", () => {
+    capable();
+    os.windows.openApp("a");
+    os.windows.toggleMaximize("a");
+    os.windows.minimizeWindow("a");
+    os.windows.restoreWindow("a");
+    expect(win("a").maximized).toBe(true);
+  });
+
+  it("moveWindow ignores a maximised window", () => {
+    capable();
+    os.windows.openApp("a");
+    const start = pos("a");
+    os.windows.toggleMaximize("a");
+    os.windows.moveWindow("a", { x: 500, y: 500 });
+    os.windows.toggleMaximize("a");
+    expect(pos("a")).toEqual(start);
+  });
+});
+
+describe("fullscreen", () => {
+  const phone = { x: 0, y: 32, w: 390, h: 748 };
+  const laptop = { x: 64, y: 32, w: 1376, h: 868 };
+  const full = () =>
+    os.windows.setScreen({ mode: "fullscreen", workArea: phone });
+  const back = () => os.windows.setScreen({ mode: "laptop", workArea: laptop });
+
+  it.each([false, true])(
+    "opens maximised in fullscreen whatever the capability: %s",
+    (maximize) => {
+      register(def("a", { capabilities: { maximize } }));
+      full();
+      os.windows.openApp("a");
+      expect(win("a").maximized).toBe(true);
+    },
+  );
+
+  it("opens un-maximised on a laptop even when capable", () => {
+    register(def("a", { capabilities: { maximize: true } }));
+    os.windows.openApp("a");
+    expect(win("a").maximized).toBe(false);
+  });
+
+  it("entering fullscreen maximises open windows", () => {
+    register(def("a"));
+    os.windows.openApp("a");
+    full();
+    expect(win("a").maximized).toBe(true);
+  });
+
+  it("toggleMaximize does nothing in fullscreen", () => {
+    register(def("a", { capabilities: { maximize: true } }));
+    full();
+    os.windows.openApp("a");
+    os.windows.toggleMaximize("a");
+    expect(win("a").maximized).toBe(true);
+  });
+
+  it("leaving fullscreen restores the laptop rules", () => {
+    register(def("a"), def("c", { capabilities: { maximize: true } }));
+    full();
+    os.windows.openApp("a");
+    expect(pos("a")).toEqual({ x: 0, y: 64 });
+    os.windows.openApp("c");
+    back();
+    expect(win("a").maximized).toBe(false);
+    expect(pos("a")).toEqual({ x: 64, y: 64 });
+    expect(win("c").maximized).toBe(true);
+  });
+
+  it("a round trip keeps a window's position", () => {
+    register(def("a"));
+    os.windows.openApp("a");
+    os.windows.moveWindow("a", { x: 300, y: 200 });
+    full();
+    back();
+    expect(pos("a")).toEqual({ x: 300, y: 200 });
+  });
+
+  it("repeating setScreen changes nothing", () => {
+    register(def("a"));
+    os.windows.openApp("a");
+    os.windows.moveWindow("a", { x: 1400, y: 200 });
+    back();
+    const before = wins();
+    back();
+    expect(pos("a")).toEqual({ x: 1400, y: 200 });
+    expect(wins()).toBe(before);
+  });
+});
+
+describe("other", () => {
+  it.each([
+    "closeWindow",
+    "minimizeWindow",
+    "restoreWindow",
+    "focusWindow",
+    "setTitle",
+    "toggleMaximize",
+    "moveWindow",
+  ] as const)("unknown ids are ignored: %s", async (name) => {
+    register(def("a"));
+    os.windows.openApp("a");
+    const before = wins();
+    const fn = os.windows[name] as (...a: unknown[]) => unknown;
+    await fn("nope", name === "moveWindow" ? { x: 1, y: 1 } : "t");
+    expect(wins()).toBe(before);
+  });
+
+  it("actions need no React and no this", async () => {
+    const { openApp, moveWindow, closeWindow } = os.windows;
+    register(def("a"));
+    openApp("a");
+    moveWindow("a", { x: 100, y: 100 });
+    expect(pos("a")).toEqual({ x: 100, y: 100 });
+    await closeWindow("a");
+    expect(wins().items).toHaveLength(0);
+  });
+
+  it("windows survive a rehydrate and are never stored", async () => {
+    const key = "beselfos:settings";
+    localStorage.setItem(
+      key,
+      JSON.stringify({
+        state: { settings: { wallpaper: "mono" } },
+        version: 0,
+      }),
+    );
+    vi.resetModules();
+    const mod = await import("@/os/store");
+    mod.os.windows.setAppLookup((id) => apps.get(id));
+    register(def("a"));
+    mod.os.windows.openApp("a");
+    mod.os.windows.setScreen({
+      mode: "laptop",
+      workArea: { x: 1, y: 2, w: 900, h: 600 },
+    });
+    const snapshot = mod.useOS.getState().windows;
+
+    mod.rehydrateSettings();
+    expect(mod.useOS.getState().windows).toEqual(snapshot);
+    expect(mod.useOS.getState().settings.wallpaper).toBe("mono");
+
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    for (let i = 0; i < 3; i++) {
+      mod.os.windows.moveWindow("a", { x: 10 + i, y: 10 });
+    }
+    mod.os.windows.focusWindow("a");
+    expect(setItem).toHaveBeenCalledTimes(0);
+    mod.os.settings.update({ sound: true });
+    expect(setItem).toHaveBeenCalledTimes(1);
+    const stored = JSON.parse(localStorage.getItem(key) ?? "{}");
+    expect(Object.keys(stored.state)).toEqual(["settings"]);
   });
 });

@@ -130,6 +130,7 @@ function placement(app: WindowApp, area: WorkArea, last?: WindowState): Point {
 export function createWindowActions(api: OSApi) {
   let lookup: AppLookup = () => undefined;
   let topZ = 0;
+  const closing = new Set<string>();
 
   /** Raising the top window writes nothing. */
   const raise = (s: Host, win: WindowState): void => {
@@ -141,10 +142,71 @@ export function createWindowActions(api: OSApi) {
       lookup = next;
     },
 
+    /**
+     * The screen owner passes the mode and work area. Clamping happens only
+     * when leaving fullscreen, so a repeated call writes nothing.
+     */
     setScreen(next: { mode: ScreenMode; workArea: WorkArea }): void {
       api.setState((s) => {
+        const leaving =
+          s.windows.mode === "fullscreen" && next.mode === "laptop";
         s.windows.mode = next.mode;
         Object.assign(s.windows.workArea, next.workArea);
+        const area = s.windows.workArea;
+        for (const w of s.windows.items) {
+          if (next.mode === "fullscreen") {
+            w.maximized = true;
+          } else if (leaving) {
+            w.maximized =
+              w.maximized && lookup(w.appId)?.capabilities.maximize === true;
+            w.position = {
+              x: Math.max(
+                area.x,
+                Math.min(w.position.x, area.x + area.w - w.size.width),
+              ),
+              y: Math.max(
+                area.y,
+                Math.min(w.position.y, area.y + area.h - w.size.height),
+              ),
+            };
+          }
+        }
+      });
+    },
+
+    /**
+     * Asks the app's onBeforeClose first. Without a hook the window goes at
+     * once, synchronously. A hook that throws counts as "allow".
+     */
+    async closeWindow(id: string): Promise<void> {
+      const w = api.getState().windows.items.find((x) => x.id === id);
+      if (!w || closing.has(id)) return;
+      const hook = lookup(w.appId)?.onBeforeClose;
+      if (hook) {
+        closing.add(id);
+        let allow = true;
+        try {
+          allow = await hook({ windowId: id, args: w.args });
+        } catch {
+          // A broken app must not leave a window that cannot be closed.
+        } finally {
+          closing.delete(id);
+        }
+        if (!allow) return;
+      }
+      api.setState((s) => {
+        s.windows.items = s.windows.items.filter((x) => x.id !== id);
+      });
+    },
+
+    /** Does nothing in fullscreen, where windows stay maximised. */
+    toggleMaximize(id: string): void {
+      api.setState((s) => {
+        if (s.windows.mode === "fullscreen") return;
+        const w = s.windows.items.find((x) => x.id === id);
+        if (w && lookup(w.appId)?.capabilities.maximize === true) {
+          w.maximized = !w.maximized;
+        }
       });
     },
 
@@ -216,8 +278,9 @@ export function createWindowActions(api: OSApi) {
     moveWindow(id: string, to: Point): void {
       api.setState((s) => {
         const w = s.windows.items.find((x) => x.id === id);
-        // Copied: immer freezes what it stores and a drag may reuse `to`.
-        if (w) w.position = { x: to.x, y: to.y };
+        // A maximised window has no free position: a move would change where
+        // it restores to. Copied: immer freezes what it stores.
+        if (w && !w.maximized) w.position = { x: to.x, y: to.y };
       });
     },
 
