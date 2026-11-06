@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bootFlavour, content, skillsWithUsage } from "./index";
+import { bootFlavour, bootGroups, content, skillsWithUsage } from "./index";
 
 const phoneShaped = (s: string): boolean =>
   /(?:\+?\d[\s().-]*){10,}|(?:\d[^A-Za-z0-9]{0,3}){9,}\d/.test(s);
@@ -409,5 +409,59 @@ describe("education", () => {
     expect(
       JSON.stringify({ education, courses, summary: profile.summary }),
     ).not.toMatch(/\\\\/);
+  });
+});
+
+describe("hobbies and flavour", () => {
+  const { hobbies } = content;
+  const cp = content.entries.find((e) => e.id === "competitive-programming");
+
+  it("hobbies match", () => {
+    expect(hobbies.map((h) => h.id)).toEqual([
+      "piano",
+      "swimming",
+      "competitive-programming",
+    ]);
+    expect(new Set(hobbies.map((h) => h.id)).size).toBe(3);
+    expect(hobbies[0].name).toBe("Piano");
+    expect(hobbies[0].period).toEqual({ start: "2014", end: "present" });
+    expect(hobbies[1].name).toBe("Swimming");
+    expect(hobbies[1].period).toEqual({ start: "2012", end: "present" });
+    for (const h of hobbies) expect(h.bullets).toHaveLength(2);
+  });
+
+  it("hobby icons follow the id", () => {
+    for (const h of hobbies) expect(h.icon).toBe(`/icons/entries/${h.id}.svg`);
+  });
+
+  it("the competitive-programming hobby adds no claim", () => {
+    const h = hobbies.find((x) => x.id === "competitive-programming");
+    expect(cp).toBeDefined();
+    expect(h?.period).toEqual(cp?.period);
+    expect(h?.bullets).toHaveLength(2);
+    for (const b of h?.bullets ?? []) expect(cp?.bullets).toContain(b);
+  });
+
+  it("competitive-programming prints once", () => {
+    const g = bootGroups();
+    expect(g.hobbies.map((h) => h.id)).toContain("competitive-programming");
+    expect(g.projects.map((e) => e.id)).not.toContain(
+      "competitive-programming",
+    );
+  });
+
+  it("no LaTeX is left in hobbies", () => {
+    expect(JSON.stringify(hobbies)).not.toMatch(/\\\\/);
+  });
+
+  it("bootFlavour matches Appendix B", () => {
+    expect(bootFlavour).toEqual([
+      "BeselfOS 2.0.0-portfolio (tty1)",
+      "[    0.000000] Booting BeselfOS 2.0.0 on x86_64 (beselflan.github.io)",
+      "[    0.004213] Detected: 1 x Beself Lan, Computer Science @ UTM",
+      "[  OK  ] Started Load Kernel Modules",
+      "[  OK  ] Mounted /home/beself",
+      "[  OK  ] Reached target Basic System",
+    ]);
   });
 });
