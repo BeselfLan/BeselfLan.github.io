@@ -282,3 +282,28 @@ describe("safety", () => {
     expect(JSON.stringify(trivia)).not.toMatch(/parallel|concurren/i);
   });
 });
+
+describe("profile", () => {
+  const { profile } = content;
+
+  it("no placeholder remains", () => {
+    expect(profile.name).toBe("Beself Lan");
+    expect(JSON.stringify(profile)).not.toMatch(
+      /placeholder|example\.(?:com|org)/i,
+    );
+    expect(profile.summary).toHaveLength(2);
+  });
+
+  it("the summary leaves out the job-application lines", () => {
+    for (const line of profile.summary) expect(line).not.toMatch(/\bjob\b/i);
+  });
+
+  it("location holds no street detail", () => {
+    expect(profile.location).not.toMatch(/\d/);
+  });
+
+  it("reserved fields stay empty", () => {
+    expect(profile.spokenLanguages).toEqual([]);
+    expect(profile.avatar).toBeUndefined();
+  });
+});
