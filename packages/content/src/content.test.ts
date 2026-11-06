@@ -572,3 +572,28 @@ describe("gated file checks", () => {
     },
   );
 });
+
+describe("docs", () => {
+  const read = () => readFileSync(join(repo, "docs/CONTENT.md"), "utf8");
+
+  it("CONTENT.md gives the steps in order", () => {
+    const doc = read();
+    const at = [
+      "src/data/projects.ts",
+      "INVENTORY",
+      "icons/entries/",
+      "scripts/media/convert.sh",
+      "npm run check",
+    ].map((s) => doc.indexOf(s));
+    for (const i of at) expect(i).toBeGreaterThanOrEqual(0);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+    expect(new Set(at).size).toBe(at.length);
+  });
+
+  it("CONTENT.md holds no contact data", () => {
+    const doc = read();
+    expect(emails(doc)).toEqual([]);
+    expect(phoneShaped(doc)).toBe(false);
+    expect(streetShaped(doc)).toBe(false);
+  });
+});
