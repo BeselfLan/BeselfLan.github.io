@@ -28,6 +28,22 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, next) => {
       .json({ error: { code: err.code, message: err.message } });
     return;
   }
+  // A client error raised below us: a body-parser failure (bad JSON, too
+  // large) or a malformed URL escape in a route parameter. Their messages can
+  // quote the request, so the text here is fixed.
+  const { status } = err as { status?: unknown };
+  if (typeof status === "number" && status >= 400 && status < 500) {
+    const tooLarge = status === 413;
+    // A handler upstream may already have set a type, such as a served file's.
+    res.removeHeader("Content-Type");
+    res.status(status).json({
+      error: {
+        code: tooLarge ? "payload_too_large" : "bad_request",
+        message: tooLarge ? "Request body too large" : "Bad request",
+      },
+    });
+    return;
+  }
   // Logged, never echoed: the message may hold paths or internals.
   req.log.error(err);
   res.status(500).json({

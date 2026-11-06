@@ -33,6 +33,7 @@ const ConfigSchema = z.object({
   // Not z.httpUrl(): it requires a dotted domain, which rejects localhost.
   PUBLIC_MEDIA_BASE_URL: z.url({ protocol: /^https?$/ }),
   RESEND_API_KEY: optionalKey,
+  CONTACT_FROM: optionalKey,
   CONTACT_TO: optionalKey,
   ADMIN_TOKEN: optionalKey,
   DMOJ_USER: optionalKey,
