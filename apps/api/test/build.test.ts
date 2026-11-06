@@ -36,7 +36,11 @@ function freePort(): Promise<number> {
 }
 
 // Only PATH plus the four required keys: every optional key stays unset.
-function start(mediaDir: string, port: number): ChildProcess {
+function start(
+  mediaDir: string,
+  port: number,
+  extraEnv: Record<string, string> = {},
+): ChildProcess {
   const child = spawn(process.execPath, [entryFile], {
     cwd: apiDir,
     env: {
@@ -45,6 +49,7 @@ function start(mediaDir: string, port: number): ChildProcess {
       CORS_ORIGINS: "https://a.test",
       MEDIA_DIR: mediaDir,
       PUBLIC_MEDIA_BASE_URL: "https://media.test/files",
+      ...extraEnv,
     },
     stdio: "ignore",
   });
@@ -89,6 +94,23 @@ describe("built server", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true, version, mediaCount: 1 });
   }, 60_000);
+
+  it.each([
+    ["no NODE_ENV", {}, 200],
+    ["production", { NODE_ENV: "production" }, 404],
+  ])(
+    "serves files only outside production: %s",
+    async (_n, env, status) => {
+      const port = await freePort();
+      start(dirWithManifest([]), port, env);
+      await waitForHealth(port);
+      const res = await fetch(
+        `http://127.0.0.1:${port}/media/files/manifest.json`,
+      );
+      expect(res.status).toBe(status);
+    },
+    60_000,
+  );
 
   it("stops on a bad manifest", async () => {
     const dir = dirWithManifest([{ ...manifestEntry, id: "Not Kebab" }]);

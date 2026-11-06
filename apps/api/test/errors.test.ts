@@ -1,6 +1,7 @@
+import type { Request, Response } from "express";
 import request from "supertest";
-import { describe, expect, it } from "vitest";
-import { ApiError } from "../src/middleware/errors.ts";
+import { describe, expect, it, vi } from "vitest";
+import { ApiError, errorHandler } from "../src/middleware/errors.ts";
 import { makeApp } from "./helpers.ts";
 
 describe("errors", () => {
@@ -37,5 +38,24 @@ describe("errors", () => {
     expect(res.body).toEqual({
       error: { code: "not_found", message: "Not found" },
     });
+  });
+});
+
+describe("started responses", () => {
+  it("leaves a started response to Express", () => {
+    const err = new Error("x");
+    const req = { log: { error: vi.fn() } };
+    const res = { headersSent: true, status: vi.fn(), json: vi.fn() };
+    const next = vi.fn();
+    errorHandler(
+      err,
+      req as unknown as Request,
+      res as unknown as Response,
+      next,
+    );
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(next).toHaveBeenCalledWith(err);
+    expect(res.status).not.toHaveBeenCalled();
+    expect(req.log.error).toHaveBeenCalledWith(err);
   });
 });

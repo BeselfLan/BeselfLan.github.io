@@ -6,7 +6,12 @@ const config = loadConfig(process.env);
 // A bad manifest stops startup, so a broken deploy fails loudly.
 await loadManifest(config.MEDIA_DIR);
 
-const app = createApp({ config, version: readVersion(import.meta.dirname) });
+const app = createApp({
+  config,
+  version: readVersion(import.meta.dirname),
+  // Outside production the API serves media files itself.
+  serveFiles: process.env.NODE_ENV !== "production",
+});
 app.listen(config.PORT, (err) => {
   // Express 5 hands listen errors to this callback instead of raising them.
   if (err) throw err;

@@ -1,6 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { MediaManifestSchema, type MediaManifest } from "../contentSchema.ts";
+import {
+  MediaManifestSchema,
+  type MediaManifest,
+  type MediaManifestEntry,
+} from "../contentSchema.ts";
+import type { StorageAdapter } from "../storage/adapter.ts";
 
 /**
  * Reads manifest.json in `dir`. A missing file is an empty manifest; bad JSON
@@ -26,4 +31,19 @@ export async function loadManifest(dir: string): Promise<MediaManifest> {
     throw new Error(`${file}: ${result.error.message}`);
   }
   return result.data;
+}
+
+/** A copy of `entry` whose source and poster names are absolute URLs. */
+export function withAbsoluteUrls(
+  entry: MediaManifestEntry,
+  storage: Pick<StorageAdapter, "publicUrl">,
+): MediaManifestEntry {
+  return {
+    ...entry,
+    sources: entry.sources.map((s) => ({
+      ...s,
+      src: storage.publicUrl(s.src),
+    })),
+    poster: storage.publicUrl(entry.poster),
+  };
 }
