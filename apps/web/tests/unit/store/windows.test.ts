@@ -293,6 +293,16 @@ describe("placement", () => {
     expect(pos("a")).toEqual({ x: 552, y: 316 });
   });
 
+  it("center clamps an oversized window", () => {
+    register(
+      def("a", {
+        window: { width: 1500, height: 1000, initialPosition: "center" },
+      }),
+    );
+    os.windows.openApp("a");
+    expect(pos("a")).toEqual({ x: 64, y: 32 });
+  });
+
   it("an explicit position is clamped", () => {
     register(
       { ...at({ x: 2000, y: 5 }), id: "far" },
@@ -426,9 +436,8 @@ describe("focus and z", () => {
     os.windows.openApp("a");
     os.windows.openApp("b");
     const last = win("b").z;
-    useOS.setState((s) => {
-      s.windows.items = s.windows.items.filter((w) => w.id !== "b");
-    });
+    // No hook, so this finishes synchronously.
+    void os.windows.closeWindow("b");
     os.windows.openApp("c");
     expect(win("c").z).toBeGreaterThan(last);
   });
@@ -731,7 +740,9 @@ describe("fullscreen", () => {
   const laptop = { x: 64, y: 32, w: 1376, h: 868 };
   const full = () =>
     os.windows.setScreen({ mode: "fullscreen", workArea: phone });
-  const back = () => os.windows.setScreen({ mode: "laptop", workArea: laptop });
+  // A fresh object each call, as a real caller passes.
+  const back = () =>
+    os.windows.setScreen({ mode: "laptop", workArea: { ...laptop } });
 
   it.each([false, true])(
     "opens maximised in fullscreen whatever the capability: %s",
@@ -783,6 +794,21 @@ describe("fullscreen", () => {
     full();
     back();
     expect(pos("a")).toEqual({ x: 300, y: 200 });
+  });
+
+  it("leaving fullscreen clamps both axes", () => {
+    register(
+      def("a", {
+        window: { width: 400, height: 300, initialPosition: { x: 0, y: 1000 } },
+      }),
+    );
+    os.windows.setScreen({
+      mode: "fullscreen",
+      workArea: { x: 0, y: 32, w: 390, h: 2000 },
+    });
+    os.windows.openApp("a");
+    back();
+    expect(pos("a")).toEqual({ x: 64, y: 600 });
   });
 
   it("repeating setScreen changes nothing", () => {
