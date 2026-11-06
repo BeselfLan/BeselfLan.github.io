@@ -1,8 +1,34 @@
-import { describe, expect, it } from "vitest";
-import { bootFlavour, content, skillsWithUsage } from "./index";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  bootFlavour,
+  bootGroups,
+  content,
+  MediaManifestSchema,
+  skillsWithUsage,
+  type Entry,
+  type MediaManifest,
+} from "./index";
 
 const phoneShaped = (s: string): boolean =>
   /(?:\+?\d[\s().-]*){10,}|(?:\d[^A-Za-z0-9]{0,3}){9,}\d/.test(s);
+const emails = (s: string): string[] =>
+  s.match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g) ?? [];
+const streetShaped = (s: string): boolean =>
+  /\b\d{1,5}\s+(?:[A-Z][a-z]+\s+){1,3}(?:Dr|Drive|Ave|Avenue|St|Street|Rd|Road|Blvd|Boulevard|Cres|Crescent|Ct|Court|Way|Lane|Ln)\b/.test(
+    s,
+  );
 const everything = JSON.stringify({ content, bootFlavour });
 
 // id kind period featured video tech... ("-" for none)
@@ -242,6 +268,25 @@ describe("safety", () => {
     expect(phoneShaped(everything)).toBe(false);
   });
 
+  it("email detector works", () => {
+    expect(emails(["a", "b.org"].join("@"))).toHaveLength(1);
+    // One boot line holds a bare @, so the character alone is not a test.
+    expect(emails("x @ y")).toEqual([]);
+  });
+
+  it("the only address in the data is the profile's", () => {
+    expect(emails(everything)).toEqual([content.profile.email]);
+  });
+
+  it("street detector works", () => {
+    expect(streetShaped(["12", "Sample", "Road"].join(" "))).toBe(true);
+    expect(streetShaped("no address here")).toBe(false);
+  });
+
+  it("no street address in content or bootFlavour", () => {
+    expect(streetShaped(everything)).toBe(false);
+  });
+
   it("RISC-V never appears", () => {
     expect(everything).not.toMatch(/risc\W?v/i);
   });
@@ -255,5 +300,300 @@ describe("safety", () => {
   const trivia = content.entries.find((e) => e.id === "trivia-knockouts");
   it.skipIf(!trivia)("trivia makes no parallel claim", () => {
     expect(JSON.stringify(trivia)).not.toMatch(/parallel|concurren/i);
+  });
+});
+
+describe("profile", () => {
+  const { profile } = content;
+
+  it("no placeholder remains", () => {
+    expect(profile.name).toBe("Beself Lan");
+    expect(JSON.stringify(profile)).not.toMatch(
+      /placeholder|example\.(?:com|org)/i,
+    );
+    expect(profile.summary).toHaveLength(2);
+  });
+
+  it("the summary leaves out the job-application lines", () => {
+    for (const line of profile.summary) expect(line).not.toMatch(/\bjob\b/i);
+  });
+
+  it("location holds no street detail", () => {
+    expect(profile.location).not.toMatch(/\d/);
+  });
+
+  it("reserved fields stay empty", () => {
+    expect(profile.spokenLanguages).toEqual([]);
+    expect(profile.avatar).toBeUndefined();
+  });
+});
+
+describe("education", () => {
+  const { education, courses, certifications, profile } = content;
+
+  it.each([
+    [
+      0,
+      "utm",
+      "University of Toronto Mississauga",
+      "Specialist Computer Science + Minor Applied Statistics (HBSc)",
+      { start: "2024", end: "2029" },
+      "3.8/4.0",
+    ],
+    [
+      1,
+      "thornhill-ss",
+      "Thornhill Secondary School",
+      "High school diploma",
+      { start: "2020", end: "2024" },
+      undefined,
+    ],
+  ])(
+    "education matches: row %i (%s)",
+    (i, id, school, program, period, gpa) => {
+      const e = education[i];
+      expect(e.id).toBe(id);
+      expect(e.school).toBe(school);
+      expect(e.program).toBe(program);
+      expect(e.period).toEqual(period);
+      expect(e.gpa).toBe(gpa);
+    },
+  );
+
+  it("education has exactly the two records", () => {
+    expect(education.map((e) => e.id)).toEqual(["utm", "thornhill-ss"]);
+  });
+
+  it("highlights match", () => {
+    expect(education[0].highlights).toEqual([]);
+    expect(education[1].highlights).toEqual([
+      "AP score of 5 for Computer Science A and BC Calculus",
+      "Distinction in Waterloo Canadian Computing Contest Senior Division 2023 & 2024",
+      "Distinction in Waterloo Canadian Senior Mathematics Contest 2024",
+      "Honour Society 2021-2024",
+    ]);
+  });
+
+  it("education locations hold no street detail", () => {
+    for (const e of education) expect(e.location).not.toMatch(/\d/);
+  });
+
+  // code|name, in Appendix A.2 order; "-" for no code.
+  const COURSES = [
+    "-|Intro to Information Security",
+    "-|Operating Systems",
+    "-|Fundamentals of Robotics",
+    "CSC209|Software Tools & System Design",
+    "CSCB58|Computer Organization",
+    "MAT223/224|Linear Algebra I & II",
+    "CSC311|Introduction to Machine Learning",
+    "CSC263|Data Structures and Analysis",
+    "CSC207|Software Design",
+    "CSC108/148|Introduction to Computer Science",
+    "STAB52|Introduction to Probability I & II",
+    "CSC236|Introduction to the Theory of Computation",
+    "MGTA01|Introduction to Business",
+  ];
+
+  it("courses match", () => {
+    expect(courses.map((c) => `${c.code ?? "-"}|${c.name}`)).toEqual(COURSES);
+    for (const c of courses.slice(0, 3)) expect("code" in c).toBe(false);
+  });
+
+  it("course names carry no code", () => {
+    for (const c of courses) expect(c.name).not.toContain("(");
+  });
+
+  it("certifications match", () => {
+    expect(certifications.map((c) => c.name)).toEqual([
+      "Emergency First Aid with CPR-B",
+      "Bronze Cross",
+      "Bronze Medallion",
+      "Bronze Star",
+    ]);
+    expect(new Set(certifications.map((c) => c.issuer)).size).toBe(1);
+    for (const c of certifications) expect(c.year).toBeUndefined();
+  });
+
+  it("names are unique", () => {
+    for (const names of [
+      courses.map((c) => c.name),
+      certifications.map((c) => c.name),
+    ]) {
+      expect(new Set(names).size).toBe(names.length);
+    }
+  });
+
+  it("no LaTeX is left", () => {
+    // JSON.stringify doubles a stray backslash, so a kept \& is caught.
+    expect(
+      JSON.stringify({ education, courses, summary: profile.summary }),
+    ).not.toMatch(/\\\\/);
+  });
+});
+
+describe("hobbies and flavour", () => {
+  const { hobbies } = content;
+  const cp = content.entries.find((e) => e.id === "competitive-programming");
+
+  it("hobbies match", () => {
+    expect(hobbies.map((h) => h.id)).toEqual([
+      "piano",
+      "swimming",
+      "competitive-programming",
+    ]);
+    expect(new Set(hobbies.map((h) => h.id)).size).toBe(3);
+    expect(hobbies[0].name).toBe("Piano");
+    expect(hobbies[0].period).toEqual({ start: "2014", end: "present" });
+    expect(hobbies[1].name).toBe("Swimming");
+    expect(hobbies[1].period).toEqual({ start: "2012", end: "present" });
+    for (const h of hobbies) expect(h.bullets).toHaveLength(2);
+  });
+
+  it("hobby icons follow the id", () => {
+    for (const h of hobbies) expect(h.icon).toBe(`/icons/entries/${h.id}.svg`);
+  });
+
+  it("the competitive-programming hobby adds no claim", () => {
+    const h = hobbies.find((x) => x.id === "competitive-programming");
+    expect(cp).toBeDefined();
+    expect(h?.period).toEqual(cp?.period);
+    expect(h?.bullets).toHaveLength(2);
+    for (const b of h?.bullets ?? []) expect(cp?.bullets).toContain(b);
+  });
+
+  it("competitive-programming prints once", () => {
+    const g = bootGroups();
+    expect(g.hobbies.map((h) => h.id)).toContain("competitive-programming");
+    expect(g.projects.map((e) => e.id)).not.toContain(
+      "competitive-programming",
+    );
+  });
+
+  it("no LaTeX is left in hobbies", () => {
+    expect(JSON.stringify(hobbies)).not.toMatch(/\\\\/);
+  });
+
+  it("bootFlavour matches Appendix B", () => {
+    expect(bootFlavour).toEqual([
+      "BeselfOS 2.0.0-portfolio (tty1)",
+      "[    0.000000] Booting BeselfOS 2.0.0 on x86_64 (beselflan.github.io)",
+      "[    0.004213] Detected: 1 x Beself Lan, Computer Science @ UTM",
+      "[  OK  ] Started Load Kernel Modules",
+      "[  OK  ] Mounted /home/beself",
+      "[  OK  ] Reached target Basic System",
+    ]);
+  });
+});
+
+const repo = fileURLToPath(new URL("../../../", import.meta.url));
+const publicDir = join(repo, "apps/web/public");
+const manifestPath = join(publicDir, "media/manifest.json");
+const hasSvg = (dir: string): boolean =>
+  existsSync(dir) && readdirSync(dir).some((f) => f.endsWith(".svg"));
+const missing = (paths: string[], root: string): string[] =>
+  paths.filter((p) => !existsSync(join(root, p)));
+const unknownMedia = (entries: Entry[], manifest: MediaManifest): string[] => {
+  const ids = new Set(manifest.map((m) => m.id));
+  return entries.flatMap((e) =>
+    e.media?.video && !ids.has(e.media.video) ? [e.media.video] : [],
+  );
+};
+
+describe("gated file checks", () => {
+  const temps: string[] = [];
+  const tmp = (): string => {
+    const dir = mkdtempSync(join(tmpdir(), "content-"));
+    temps.push(dir);
+    return dir;
+  };
+  afterEach(() => {
+    for (const d of temps.splice(0))
+      rmSync(d, { recursive: true, force: true });
+  });
+
+  it("hasSvg counts only SVGs directly in the folder", () => {
+    const dir = tmp();
+    expect(hasSvg(join(dir, "nope"))).toBe(false);
+    writeFileSync(join(dir, "y.png"), "");
+    mkdirSync(join(dir, "legacy"));
+    writeFileSync(join(dir, "legacy", "x.svg"), "");
+    expect(hasSvg(dir)).toBe(false);
+    writeFileSync(join(dir, "a.svg"), "");
+    expect(hasSvg(dir)).toBe(true);
+  });
+
+  it("missing reports gaps", () => {
+    const dir = tmp();
+    writeFileSync(join(dir, "a.svg"), "");
+    expect(missing(["a.svg", "b.svg"], dir)).toEqual(["b.svg"]);
+    expect(missing(["/a.svg"], dir)).toEqual([]);
+  });
+
+  it("unknownMedia reports ids not in the manifest", () => {
+    const base = content.entries[0];
+    const withVideo: Entry = { ...base, media: { video: "nope" } };
+    const without: Entry = { ...base, media: undefined };
+    expect(unknownMedia([withVideo, without], [])).toEqual(["nope"]);
+    expect(unknownMedia([without], [])).toEqual([]);
+  });
+
+  const skillsDir = join(publicDir, "icons/skills");
+  const entriesDir = join(publicDir, "icons/entries");
+
+  it.skipIf(!hasSvg(skillsDir))("every skill icon file exists", () => {
+    expect(
+      missing(
+        content.skills.map((s) => s.icon),
+        publicDir,
+      ),
+    ).toEqual([]);
+  });
+
+  it.skipIf(!hasSvg(entriesDir))(
+    "every featured entry has an icon file",
+    () => {
+      expect(
+        missing(
+          content.entries.filter((e) => e.featured).map((e) => e.icon),
+          publicDir,
+        ),
+      ).toEqual([]);
+    },
+  );
+
+  it.skipIf(!existsSync(manifestPath))(
+    "every media id is in the manifest",
+    () => {
+      const manifest = MediaManifestSchema.parse(
+        JSON.parse(readFileSync(manifestPath, "utf8")),
+      );
+      expect(unknownMedia(content.entries, manifest)).toEqual([]);
+    },
+  );
+});
+
+describe("docs", () => {
+  const read = () => readFileSync(join(repo, "docs/CONTENT.md"), "utf8");
+
+  it("CONTENT.md gives the steps in order", () => {
+    const doc = read();
+    const at = [
+      "src/data/projects.ts",
+      "INVENTORY",
+      "icons/entries/",
+      "scripts/media/convert.sh",
+      "npm run check",
+    ].map((s) => doc.indexOf(s));
+    for (const i of at) expect(i).toBeGreaterThanOrEqual(0);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+    expect(new Set(at).size).toBe(at.length);
+  });
+
+  it("CONTENT.md holds no contact data", () => {
+    const doc = read();
+    expect(emails(doc)).toEqual([]);
+    expect(phoneShaped(doc)).toBe(false);
+    expect(streetShaped(doc)).toBe(false);
   });
 });
