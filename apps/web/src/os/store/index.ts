@@ -17,6 +17,18 @@ import {
 } from "./settings";
 import { createBootActions, initialBoot, type BootState } from "./boot";
 import { createShellActions, initialShell, type ShellState } from "./shell";
+import {
+  createWindowActions,
+  initialWindows,
+  type WindowManagerState,
+} from "./windows";
+
+export {
+  focusedWindow,
+  isAppRunning,
+  orderedWindows,
+  windowsForApp,
+} from "./windows";
 
 // A new slice is one new file plus one line in each of three lists:
 // OSState, initialState and os.
@@ -25,6 +37,7 @@ export interface OSState {
   shell: ShellState;
   notifications: NotificationState;
   boot: BootState;
+  windows: WindowManagerState;
 }
 
 const initialState: OSState = {
@@ -32,6 +45,7 @@ const initialState: OSState = {
   shell: initialShell,
   notifications: initialNotifications,
   boot: initialBoot,
+  windows: initialWindows,
 };
 
 const { storage, arm } = createSettingsStorage();
@@ -81,6 +95,7 @@ export const os = {
   shell: createShellActions(useOS),
   notifications: createNotificationActions(useOS),
   boot: createBootActions(useOS, BOOT_STAGES),
+  windows: createWindowActions(useOS),
 };
 
 /** Loads stored settings into the store. Call once on the client, after mount. */
