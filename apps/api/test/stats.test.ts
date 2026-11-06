@@ -57,8 +57,10 @@ describe("stats routes", () => {
     await request(a).get("/api/stats/dmoj");
     await request(a).get("/api/stats/github");
     const urls = load.mock.calls.map((c) => c[0]);
-    expect(urls[0]).toContain("user-marker");
-    expect(urls[1]).toContain("other-marker");
+    expect(urls).toEqual([
+      "https://dmoj.ca/api/v2/user/user-marker",
+      "https://api.github.com/users/other-marker/repos?per_page=100&sort=pushed",
+    ]);
   });
 
   it("each route has its own cache entry", async () => {

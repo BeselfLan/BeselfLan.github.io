@@ -18,21 +18,28 @@ export function resendMailer(
   from: string = DEFAULT_FROM,
 ): SendMail {
   return async (mail) => {
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        from,
-        to: [mail.to],
-        subject: `Portfolio message from ${mail.name}`,
-        text: `From: ${mail.name} <${mail.email}>\n\n${mail.message}`,
-        reply_to: mail.email,
-      }),
-      signal: AbortSignal.timeout(10_000),
-    });
+    let res: Response;
+    try {
+      res = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          from,
+          to: [mail.to],
+          subject: `Portfolio message from ${mail.name}`,
+          text: `From: ${mail.name} <${mail.email}>\n\n${mail.message}`,
+          reply_to: mail.email,
+        }),
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch (err) {
+      // Node's Headers error quotes the whole header value, key included, so
+      // only the error's name is kept.
+      throw new Error(`mail request failed: ${(err as Error).name}`);
+    }
     if (!res.ok) throw new Error(`mail provider returned ${res.status}`);
   };
 }

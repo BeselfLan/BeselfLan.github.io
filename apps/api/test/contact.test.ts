@@ -60,7 +60,9 @@ describe("contact", () => {
     ["bad email", { ...valid, email: "not-an-email" }, "not-an-email"],
     ["missing message", { name: valid.name, email: valid.email }, ""],
     ["blank message", { ...valid, message: "   " }, ""],
-    ["line break in name", { ...valid, name: "A\nBcc: x" }, "Bcc: x"],
+    ["line feed in name", { ...valid, name: "A\nBcc: x" }, "Bcc: x"],
+    ["carriage return in name", { ...valid, name: "A\rBcc: x" }, "Bcc: x"],
+    ["CRLF in name", { ...valid, name: "A\r\nBcc: x" }, "Bcc: x"],
     [
       "name of 101 characters",
       { ...valid, name: "n".repeat(101) },
@@ -150,6 +152,11 @@ describe("contact", () => {
         (await request(a).get("/health").set("X-Forwarded-For", "1.1.1.1"))
           .status,
       ).toBe(200);
+      // A limiter mounted on the whole router would also hit the stats routes.
+      const stats = await request(a)
+        .get("/api/stats/dmoj")
+        .set("X-Forwarded-For", "1.1.1.1");
+      expect(stats.status).toBe(503);
     });
 
     it("runs before the body is read", async () => {
@@ -205,7 +212,7 @@ describe("contact", () => {
     expect(res.status).toBe(502);
     expect(res.text).not.toContain("key-marker");
     const log = lines.join("");
-    expect(log).toContain("401");
+    expect(log).toContain("returned 401");
     for (const secret of [
       "key-marker",
       "Name Marker",
@@ -252,5 +259,52 @@ describe("contact", () => {
     expect(pre.headers["access-control-allow-origin"]).toBe("https://a.test");
     expect(pre.headers["access-control-allow-headers"]).toBeDefined();
     for (let i = 0; i < 5; i++) expect((await post(a)).status).toBe(202);
+  });
+
+  it.each([
+    ["line feed", "\n"],
+    ["carriage return", "\r"],
+    ["NUL", "\0"],
+  ])("a malformed key (%s) never reaches the log", async (_n, ch) => {
+    const lines: string[] = [];
+    // Real fetch builds Headers from the init and throws on a bad value, so
+    // the stub does the same.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) => {
+        new Headers(init.headers);
+        return new Response("", { status: 401 });
+      }),
+    );
+    const a = makeApp(
+      { ...env, RESEND_API_KEY: `key-marker${ch}x` },
+      {
+        logLevel: "info",
+        logStream: { write: (m) => void lines.push(m) },
+      },
+    );
+    const res = await request(a)
+      .post("/api/contact")
+      .set("X-Forwarded-For", "1.1.1.1")
+      .send(valid);
+    expect(res.status).toBe(502);
+    const log = lines.join("");
+    expect(log).toContain("mail request failed");
+    expect(log).not.toContain("key-marker");
+  });
+
+  it("CONTACT_FROM reaches the mailer", async () => {
+    const fetchMock = vi.fn<
+      (url: string, init: RequestInit) => Promise<Response>
+    >(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const a = makeApp({ ...env, CONTACT_FROM: "Me <me@sender.test>" });
+    const res = await request(a)
+      .post("/api/contact")
+      .set("X-Forwarded-For", "1.1.1.1")
+      .send(valid);
+    expect(res.status).toBe(202);
+    const init = fetchMock.mock.calls[0][1];
+    expect(JSON.parse(init.body as string).from).toBe("Me <me@sender.test>");
   });
 });
