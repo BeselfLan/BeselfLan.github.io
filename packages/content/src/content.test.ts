@@ -1,5 +1,25 @@
-import { describe, expect, it } from "vitest";
-import { bootFlavour, bootGroups, content, skillsWithUsage } from "./index";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  bootFlavour,
+  bootGroups,
+  content,
+  MediaManifestSchema,
+  skillsWithUsage,
+  type Entry,
+  type MediaManifest,
+} from "./index";
 
 const phoneShaped = (s: string): boolean =>
   /(?:\+?\d[\s().-]*){10,}|(?:\d[^A-Za-z0-9]{0,3}){9,}\d/.test(s);
@@ -464,4 +484,91 @@ describe("hobbies and flavour", () => {
       "[  OK  ] Reached target Basic System",
     ]);
   });
+});
+
+const repo = fileURLToPath(new URL("../../../", import.meta.url));
+const publicDir = join(repo, "apps/web/public");
+const manifestPath = join(publicDir, "media/manifest.json");
+const hasSvg = (dir: string): boolean =>
+  existsSync(dir) && readdirSync(dir).some((f) => f.endsWith(".svg"));
+const missing = (paths: string[], root: string): string[] =>
+  paths.filter((p) => !existsSync(join(root, p)));
+const unknownMedia = (entries: Entry[], manifest: MediaManifest): string[] => {
+  const ids = new Set(manifest.map((m) => m.id));
+  return entries.flatMap((e) =>
+    e.media?.video && !ids.has(e.media.video) ? [e.media.video] : [],
+  );
+};
+
+describe("gated file checks", () => {
+  const temps: string[] = [];
+  const tmp = (): string => {
+    const dir = mkdtempSync(join(tmpdir(), "content-"));
+    temps.push(dir);
+    return dir;
+  };
+  afterEach(() => {
+    for (const d of temps.splice(0))
+      rmSync(d, { recursive: true, force: true });
+  });
+
+  it("hasSvg counts only SVGs directly in the folder", () => {
+    const dir = tmp();
+    expect(hasSvg(join(dir, "nope"))).toBe(false);
+    writeFileSync(join(dir, "y.png"), "");
+    mkdirSync(join(dir, "legacy"));
+    writeFileSync(join(dir, "legacy", "x.svg"), "");
+    expect(hasSvg(dir)).toBe(false);
+    writeFileSync(join(dir, "a.svg"), "");
+    expect(hasSvg(dir)).toBe(true);
+  });
+
+  it("missing reports gaps", () => {
+    const dir = tmp();
+    writeFileSync(join(dir, "a.svg"), "");
+    expect(missing(["a.svg", "b.svg"], dir)).toEqual(["b.svg"]);
+    expect(missing(["/a.svg"], dir)).toEqual([]);
+  });
+
+  it("unknownMedia reports ids not in the manifest", () => {
+    const base = content.entries[0];
+    const withVideo: Entry = { ...base, media: { video: "nope" } };
+    const without: Entry = { ...base, media: undefined };
+    expect(unknownMedia([withVideo, without], [])).toEqual(["nope"]);
+    expect(unknownMedia([without], [])).toEqual([]);
+  });
+
+  const skillsDir = join(publicDir, "icons/skills");
+  const entriesDir = join(publicDir, "icons/entries");
+
+  it.skipIf(!hasSvg(skillsDir))("every skill icon file exists", () => {
+    expect(
+      missing(
+        content.skills.map((s) => s.icon),
+        publicDir,
+      ),
+    ).toEqual([]);
+  });
+
+  it.skipIf(!hasSvg(entriesDir))(
+    "every featured entry has an icon file",
+    () => {
+      expect(
+        missing(
+          content.entries.filter((e) => e.featured).map((e) => e.icon),
+          publicDir,
+        ),
+      ).toEqual([]);
+    },
+  );
+
+  it.skipIf(!existsSync(manifestPath))(
+    "every media id is in the manifest",
+    () => {
+      const manifest = MediaManifestSchema.parse(
+        JSON.parse(readFileSync(manifestPath, "utf8")),
+      );
+      expect(unknownMedia(content.entries, manifest)).toEqual([]);
+    },
+  );
 });
