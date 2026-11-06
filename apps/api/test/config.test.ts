@@ -32,6 +32,7 @@ describe("loadConfig", () => {
     const keys = [
       "RESEND_API_KEY",
       "CONTACT_TO",
+      "CONTACT_FROM",
       "ADMIN_TOKEN",
       "DMOJ_USER",
       "GITHUB_USER",
@@ -41,6 +42,12 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...valid, DMOJ_USER: "someone" }).DMOJ_USER).toBe(
       "someone",
     );
+  });
+
+  it("treats an empty CONTACT_FROM as unset", () => {
+    expect(
+      loadConfig({ ...valid, CONTACT_FROM: "" }).CONTACT_FROM,
+    ).toBeUndefined();
   });
 
   it("rejects an origin with a trailing slash", () => {
