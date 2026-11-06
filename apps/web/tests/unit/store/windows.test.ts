@@ -54,6 +54,21 @@ afterEach(() => {
 });
 
 describe("shape", () => {
+  it("action list", () => {
+    expect(Object.keys(os.windows).sort()).toEqual([
+      "cycleFocus",
+      "focusWindow",
+      "minimizeAll",
+      "minimizeWindow",
+      "moveWindow",
+      "openApp",
+      "restoreWindow",
+      "setAppLookup",
+      "setScreen",
+      "setTitle",
+    ]);
+  });
+
   it("initial state", () => {
     expect(useOS.getInitialState().windows).toEqual({
       items: [],
@@ -142,6 +157,25 @@ describe("openApp", () => {
     expect(focusedId()).toBe("a");
   });
 
+  it("re-opening restores a minimised window", () => {
+    register(def("a"), def("b"));
+    os.windows.openApp("a");
+    os.windows.openApp("b");
+    os.windows.minimizeWindow("a");
+    os.windows.openApp("a");
+    expect(win("a").status).toBe("open");
+    expect(focusedId()).toBe("a");
+    expect(wins().items).toHaveLength(2);
+  });
+
+  it("a title set by the app survives a re-open", () => {
+    register(def("a"));
+    os.windows.openApp("a");
+    os.windows.setTitle("a", "Custom");
+    os.windows.openApp("a", { item: "z" });
+    expect(win("a").title).toBe("Custom");
+  });
+
   it("multi-instance windows are keyed", () => {
     register(keyed("viewer"));
     expect(os.windows.openApp("viewer", { k: "x" })).toBe("viewer:x");
@@ -207,6 +241,14 @@ describe("placement", () => {
     register(def("a"));
     os.windows.openApp("a");
     expect(pos("a")).toEqual({ x: 96, y: 64 });
+  });
+
+  it("cascade steps from the last window", () => {
+    register(def("a"), def("b"));
+    os.windows.openApp("a");
+    os.windows.moveWindow("a", { x: 300, y: 200 });
+    os.windows.openApp("b");
+    expect(pos("b")).toEqual({ x: 332, y: 232 });
   });
 
   it("cascade wraps at the bottom", () => {
@@ -300,20 +342,30 @@ describe("selectors", () => {
   it("alwaysOnTop sorts above the rest, by z in each band", () => {
     open("a", "p", "b", "q");
     expect(ids()).toEqual(["a", "b", "p", "q"]);
-    useOS.setState((s) => {
-      s.windows.items[1].z = 100;
-    });
+    os.windows.focusWindow("p");
     expect(ids()).toEqual(["a", "b", "q", "p"]);
+    os.windows.focusWindow("a");
+    expect(ids()).toEqual(["b", "a", "q", "p"]);
   });
 
   it("focusedWindow can sit under an always-on-top window", () => {
-    open("a", "p");
-    expect(focusedId()).toBe("p");
-    useOS.setState((s) => {
-      s.windows.items[0].z = 100;
-    });
-    expect(ids()).toEqual(["a", "p"]);
+    open("a", "p", "b", "q");
+    os.windows.focusWindow("a");
     expect(focusedId()).toBe("a");
+  });
+
+  it("orderedWindows keeps minimised windows", () => {
+    open("a", "b", "c");
+    os.windows.minimizeWindow("c");
+    expect(ids()).toHaveLength(3);
+  });
+
+  it("focus falls to the next open window", () => {
+    open("a", "b", "c");
+    os.windows.minimizeWindow("c");
+    expect(focusedId()).toBe("b");
+    os.windows.minimizeAll();
+    expect(focusedId()).toBeNull();
   });
 
   it("windowsForApp and isAppRunning", () => {
@@ -329,6 +381,8 @@ describe("selectors", () => {
     expect(windowsForApp(s, "notes").map((w) => w.id)).toEqual(["notes"]);
     expect(isAppRunning(s, "notes")).toBe(true);
     expect(isAppRunning(s, "nope")).toBe(false);
+    os.windows.minimizeWindow("notes");
+    expect(isAppRunning(useOS.getState(), "notes")).toBe(true);
   });
 
   it("useShallow(orderedWindows) re-renders only when the list changes", () => {
@@ -347,5 +401,182 @@ describe("selectors", () => {
       os.windows.openApp("a");
     });
     expect(renders).toBe(base + 1);
+  });
+});
+
+describe("focus and z", () => {
+  const three = () => {
+    register(def("a"), def("b"), def("c"));
+    ["a", "b", "c"].forEach((n) => os.windows.openApp(n));
+  };
+
+  it("focus raises only that window", () => {
+    three();
+    const [b, c] = [win("b"), win("c")];
+    os.windows.focusWindow("a");
+    expect(focusedId()).toBe("a");
+    expect(win("b")).toBe(b);
+    expect(win("c")).toBe(c);
+  });
+
+  it("z only goes up", () => {
+    register(def("a"), def("b"), def("c"));
+    os.windows.openApp("a");
+    os.windows.openApp("b");
+    const last = win("b").z;
+    useOS.setState((s) => {
+      s.windows.items = s.windows.items.filter((w) => w.id !== "b");
+    });
+    os.windows.openApp("c");
+    expect(win("c").z).toBeGreaterThan(last);
+  });
+
+  it("focusing the top window changes nothing", () => {
+    three();
+    const before = wins();
+    os.windows.focusWindow("c");
+    expect(wins()).toBe(before);
+  });
+
+  it("focusing a minimised window changes nothing", () => {
+    three();
+    os.windows.minimizeWindow("a");
+    const before = wins();
+    os.windows.focusWindow("a");
+    expect(wins()).toBe(before);
+  });
+});
+
+describe("minimise and restore", () => {
+  it("minimise hides without removing", () => {
+    register(def("a"));
+    os.windows.openApp("a");
+    os.windows.moveWindow("a", { x: 300, y: 200 });
+    os.windows.minimizeWindow("a");
+    expect(win("a").status).toBe("minimized");
+    expect(pos("a")).toEqual({ x: 300, y: 200 });
+  });
+
+  it("restore brings a window back on top", () => {
+    register(def("a"), def("b"));
+    os.windows.openApp("a");
+    os.windows.openApp("b");
+    const at = pos("a");
+    os.windows.minimizeWindow("a");
+    os.windows.restoreWindow("a");
+    expect(focusedId()).toBe("a");
+    expect(pos("a")).toEqual(at);
+  });
+
+  it("minimizeAll minimises what is open", () => {
+    register(def("a"), def("b"), def("c"));
+    ["a", "b", "c"].forEach((n) => os.windows.openApp(n));
+    os.windows.minimizeWindow("c");
+    const c = win("c");
+    os.windows.minimizeAll();
+    expect(wins().items.every((w) => w.status === "minimized")).toBe(true);
+    expect(win("c")).toBe(c);
+    expect(focusedId()).toBeNull();
+  });
+});
+
+describe("move and title", () => {
+  const three = () => {
+    register(def("a"), def("b"), def("c"));
+    ["a", "b", "c"].forEach((n) => os.windows.openApp(n));
+  };
+
+  it("moving one window leaves the others reference-equal", () => {
+    three();
+    const [a, b, c] = [win("a"), win("b"), win("c")];
+    os.windows.moveWindow("b", { x: 5, y: 6 });
+    expect(win("a")).toBe(a);
+    expect(win("c")).toBe(c);
+    expect(win("b")).not.toBe(b);
+  });
+
+  it("a drag re-renders only the dragged window", () => {
+    three();
+    const counts = { a: 0, b: 0, order: 0 };
+    const sel = (id: string) => (s: ReturnType<typeof useOS.getState>) =>
+      s.windows.items.find((w) => w.id === id);
+    renderHook(() => {
+      counts.a++;
+      return useOS(sel("a"));
+    });
+    renderHook(() => {
+      counts.b++;
+      return useOS(sel("b"));
+    });
+    renderHook(() => {
+      counts.order++;
+      return useOS(useShallow((s) => orderedWindows(s).map((w) => w.id)));
+    });
+    const before = { ...counts };
+    act(() => os.windows.moveWindow("a", { x: 7, y: 8 }));
+    expect(counts.a).toBe(before.a + 1);
+    expect(counts.b).toBe(before.b);
+    expect(counts.order).toBe(before.order);
+  });
+
+  it("moveWindow keeps no reference to the caller's point", () => {
+    three();
+    const p = { x: 10, y: 20 };
+    os.windows.moveWindow("a", p);
+    expect(() => {
+      p.x = 99;
+    }).not.toThrow();
+    expect(pos("a")).toEqual({ x: 10, y: 20 });
+  });
+
+  it("setTitle changes only that window", () => {
+    three();
+    const [a, c] = [win("a"), win("c")];
+    os.windows.setTitle("b", "New");
+    expect(win("b").title).toBe("New");
+    expect(win("a")).toBe(a);
+    expect(win("c")).toBe(c);
+  });
+});
+
+describe("cycleFocus", () => {
+  beforeEach(() => {
+    register(def("a"), def("b"), def("c"));
+    ["a", "b", "c"].forEach((n) => os.windows.openApp(n));
+  });
+  const run = (dir: 1 | -1, n: number) =>
+    Array.from({ length: n }, () => {
+      os.windows.cycleFocus(dir);
+      return focusedId();
+    });
+
+  it("forward visits every window, most recent first", () => {
+    expect(run(1, 3)).toEqual(["b", "a", "c"]);
+  });
+
+  it("backward is the reverse", () => {
+    expect(run(-1, 3)).toEqual(["a", "b", "c"]);
+  });
+
+  it("one step each way returns to the start", () => {
+    os.windows.cycleFocus(1);
+    os.windows.cycleFocus(-1);
+    expect(focusedId()).toBe("c");
+    expect(ids()).toEqual(["a", "b", "c"]);
+  });
+
+  it("minimised windows are left out", () => {
+    os.windows.minimizeWindow("b");
+    const b = win("b");
+    expect(run(1, 2)).toEqual(["a", "c"]);
+    expect(win("b")).toBe(b);
+  });
+
+  it("one window changes nothing", () => {
+    os.windows.minimizeWindow("a");
+    os.windows.minimizeWindow("b");
+    const before = wins();
+    os.windows.cycleFocus(1);
+    expect(wins()).toBe(before);
   });
 });

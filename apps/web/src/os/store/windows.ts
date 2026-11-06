@@ -188,5 +188,68 @@ export function createWindowActions(api: OSApi) {
       });
       return id;
     },
+
+    /** Raises an open window. Minimised ones need restoreWindow. */
+    focusWindow(id: string): void {
+      api.setState((s) => {
+        const w = s.windows.items.find((x) => x.id === id);
+        if (w?.status === "open") raise(s, w);
+      });
+    },
+
+    minimizeWindow(id: string): void {
+      api.setState((s) => {
+        const w = s.windows.items.find((x) => x.id === id);
+        if (w) w.status = "minimized";
+      });
+    },
+
+    restoreWindow(id: string): void {
+      api.setState((s) => {
+        const w = s.windows.items.find((x) => x.id === id);
+        if (!w) return;
+        w.status = "open";
+        raise(s, w);
+      });
+    },
+
+    moveWindow(id: string, to: Point): void {
+      api.setState((s) => {
+        const w = s.windows.items.find((x) => x.id === id);
+        // Copied: immer freezes what it stores and a drag may reuse `to`.
+        if (w) w.position = { x: to.x, y: to.y };
+      });
+    },
+
+    setTitle(id: string, title: string): void {
+      api.setState((s) => {
+        const w = s.windows.items.find((x) => x.id === id);
+        if (w) w.title = title;
+      });
+    },
+
+    minimizeAll(): void {
+      api.setState((s) => {
+        for (const w of s.windows.items) w.status = "minimized";
+      });
+    },
+
+    /**
+     * Rotates the stack of open windows. 1 sends the focused one to the back,
+     * so repeated calls visit windows most recent first. -1 is the inverse.
+     */
+    cycleFocus(dir: 1 | -1): void {
+      api.setState((s) => {
+        const open = s.windows.items
+          .filter((w) => w.status === "open")
+          .sort((a, b) => a.z - b.z);
+        if (open.length < 2) return;
+        const order =
+          dir === 1
+            ? [open[open.length - 1], ...open.slice(0, -1)]
+            : [...open.slice(1), open[0]];
+        for (const w of order) w.z = ++topZ;
+      });
+    },
   };
 }
