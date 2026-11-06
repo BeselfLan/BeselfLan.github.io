@@ -3,6 +3,12 @@ import { bootFlavour, content, skillsWithUsage } from "./index";
 
 const phoneShaped = (s: string): boolean =>
   /(?:\+?\d[\s().-]*){10,}|(?:\d[^A-Za-z0-9]{0,3}){9,}\d/.test(s);
+const emails = (s: string): string[] =>
+  s.match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g) ?? [];
+const streetShaped = (s: string): boolean =>
+  /\b\d{1,5}\s+(?:[A-Z][a-z]+\s+){1,3}(?:Dr|Drive|Ave|Avenue|St|Street|Rd|Road|Blvd|Boulevard|Cres|Crescent|Ct|Court|Way|Lane|Ln)\b/.test(
+    s,
+  );
 const everything = JSON.stringify({ content, bootFlavour });
 
 // id kind period featured video tech... ("-" for none)
@@ -240,6 +246,25 @@ describe("safety", () => {
 
   it("no phone-shaped value in content or bootFlavour", () => {
     expect(phoneShaped(everything)).toBe(false);
+  });
+
+  it("email detector works", () => {
+    expect(emails(["a", "b.org"].join("@"))).toHaveLength(1);
+    // One boot line holds a bare @, so the character alone is not a test.
+    expect(emails("x @ y")).toEqual([]);
+  });
+
+  it("the only address in the data is the profile's", () => {
+    expect(emails(everything)).toEqual([content.profile.email]);
+  });
+
+  it("street detector works", () => {
+    expect(streetShaped(["12", "Sample", "Road"].join(" "))).toBe(true);
+    expect(streetShaped("no address here")).toBe(false);
+  });
+
+  it("no street address in content or bootFlavour", () => {
+    expect(streetShaped(everything)).toBe(false);
   });
 
   it("RISC-V never appears", () => {
