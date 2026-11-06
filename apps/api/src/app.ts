@@ -6,6 +6,7 @@ import type { MediaManifest } from "./contentSchema.ts";
 import { corsMiddleware } from "./middleware/cors.ts";
 import { errorHandler, notFound } from "./middleware/errors.ts";
 import { contactRouter, type SendMail } from "./routes/contact.ts";
+import { statsRouter, type FetchJson } from "./routes/stats.ts";
 import { healthRouter } from "./routes/health.ts";
 import { mediaRouter } from "./routes/media.ts";
 import { loadManifest } from "./services/media.ts";
@@ -18,6 +19,8 @@ export interface AppDeps {
   logLevel?: string;
   logStream?: { write(msg: string): void };
   sendMail?: SendMail;
+  fetchJson?: FetchJson;
+  now?: () => number;
 }
 
 export function createApp(deps: AppDeps): express.Express {
@@ -39,6 +42,7 @@ export function createApp(deps: AppDeps): express.Express {
   app.use(mediaRouter({ config, readManifest, serveFiles: deps.serveFiles }));
   app.use(healthRouter({ version, readManifest }));
   app.use(contactRouter({ config, sendMail: deps.sendMail }));
+  app.use(statsRouter({ config, fetchJson: deps.fetchJson, now: deps.now }));
   app.use(notFound);
   app.use(errorHandler);
   return app;

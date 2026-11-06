@@ -1,5 +1,6 @@
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { SendMail } from "../src/services/mail.ts";
 import { makeApp } from "./helpers.ts";
 
 const env = { RESEND_API_KEY: "key-marker", CONTACT_TO: "owner@owner.test" };
@@ -9,7 +10,7 @@ const valid = {
   message: "Hello from a visitor",
 };
 
-const sendMail = vi.fn(async (_mail: unknown) => {});
+const sendMail = vi.fn<SendMail>(async () => {});
 const app = (over: Record<string, string | undefined> = {}, deps = {}) =>
   makeApp({ ...env, ...over } as Record<string, string>, {
     sendMail,
