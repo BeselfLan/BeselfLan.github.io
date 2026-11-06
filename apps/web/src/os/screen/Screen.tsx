@@ -47,8 +47,8 @@ const getSnapshot = (): ScreenMode =>
   window.matchMedia(FULLSCREEN_QUERY).matches ? "fullscreen" : "laptop";
 
 /**
- * The mode comes from the viewport, not the container: fullscreen hides the
- * bezel, which resizes the container, so a container check would flip-flop.
+ * The mode comes from the viewport, not the container: a parent may resize
+ * the container when the mode changes, so a container check would flip-flop.
  * Works above `Screen`. The server and first client render say "laptop".
  */
 export function useScreenMode(): ScreenMode {
@@ -61,8 +61,8 @@ export function useScreen(): ScreenValue {
   return value;
 }
 
-// The dock moves to the bottom in fullscreen and the top bar stays, so both
-// are read from the laptop work area (y is the top bar, x the dock).
+// Reserves the same strips as the laptop work area: y at the top, and x at
+// the bottom instead of the side.
 function workAreaFor(mode: ScreenMode, size: typeof VIRTUAL): WorkArea {
   if (mode === "laptop") return initialWindows.workArea;
   const { x: dock, y: bar } = initialWindows.workArea;

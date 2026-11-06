@@ -14,12 +14,18 @@ import { os, useOS } from "@/os/store";
 
 class FakeResizeObserver {
   static last: FakeResizeObserver;
-  observe = vi.fn();
-  disconnect = vi.fn();
+  targets = new Set<Element>();
+  observe = vi.fn((el: Element) => {
+    this.targets.add(el);
+  });
+  disconnect = vi.fn(() => {
+    this.targets.clear();
+  });
   constructor(private cb: ResizeObserverCallback) {
     FakeResizeObserver.last = this;
   }
   trigger(width: number, height: number) {
+    if (this.targets.size === 0) return;
     this.cb(
       [{ contentRect: { width, height } } as ResizeObserverEntry],
       this as unknown as ResizeObserver,
@@ -100,6 +106,11 @@ describe("scaling", () => {
     expect(seen.scale).toBe(scale);
   });
 
+  it("observes the container, not the box", () => {
+    mount();
+    expect([...FakeResizeObserver.last.targets]).toEqual([box().parentElement]);
+  });
+
   it("recomputes on resize", () => {
     mount();
     resize(720, 450);
@@ -136,10 +147,14 @@ describe("scaling", () => {
     expect(seen.scale).toBe(0.5);
   });
 
-  it("ignores a zero size", () => {
+  it.each([
+    [0, 0],
+    [720, 0],
+    [0, 450],
+  ])("ignores a zero size: %ix%i", (w, h) => {
     mount();
     resize(720, 450);
-    resize(0, 0);
+    resize(w, h);
     expect(seen.scale).toBe(0.5);
   });
 });
@@ -277,12 +292,19 @@ describe("portal", () => {
     const wrapper = content.parentElement!;
     const portal = document.querySelector("[data-screen-portal]")!;
     expect(wrapper.className).toContain("isolate");
+    expect(portal.className).toContain("pointer-events-none");
     expect(
       wrapper.compareDocumentPosition(portal) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
   });
 });
+
+// Output that depends on the mode, so a mode read during the first render
+// shows up as a markup mismatch.
+function ModeTag() {
+  return <i data-mode={useScreen().mode} />;
+}
 
 describe("hydration", () => {
   it("the server render touches no browser API", () => {
@@ -295,36 +317,37 @@ describe("hydration", () => {
     const html = renderToString(
       <Screen>
         <Probe />
+        <ModeTag />
       </Screen>,
     );
     expect(html).toContain("--s:1");
+    expect(html).toContain('data-mode="laptop"');
+    expect(seen.mode).toBe("laptop");
     expect(seen.portalTarget).toBeNull();
   });
 
   it("hydrates with no warnings, then switches", () => {
-    const html = renderToString(
+    const tree = (
       <Screen>
         <Probe />
-      </Screen>,
+        <ModeTag />
+      </Screen>
     );
+    const html = renderToString(tree);
     media = stubMedia(true);
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const onRecoverableError = vi.fn();
     const container = document.createElement("div");
     container.innerHTML = html;
     document.body.appendChild(container);
+    let root!: ReturnType<typeof hydrateRoot>;
     act(() => {
-      hydrateRoot(
-        container,
-        <Screen>
-          <Probe />
-        </Screen>,
-        { onRecoverableError },
-      );
+      root = hydrateRoot(container, tree, { onRecoverableError });
     });
     expect(onRecoverableError).not.toHaveBeenCalled();
     expect(errorSpy).not.toHaveBeenCalled();
     expect(seen.mode).toBe("fullscreen");
+    act(() => root.unmount());
     container.remove();
   });
 });
