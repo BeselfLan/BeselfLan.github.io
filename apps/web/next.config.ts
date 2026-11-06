@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { PHASE_DEVELOPMENT_SERVER } from "next/constants";
 
 const nextConfig: NextConfig = {
   output: "export",
@@ -18,4 +19,9 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+// `page.dev.tsx` is a route under `next dev` only, so it never ships.
+export default function config(phase: string): NextConfig {
+  return phase === PHASE_DEVELOPMENT_SERVER
+    ? { ...nextConfig, pageExtensions: ["tsx", "ts", "jsx", "js", "dev.tsx"] }
+    : nextConfig;
+}
