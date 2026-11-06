@@ -307,3 +307,107 @@ describe("profile", () => {
     expect(profile.avatar).toBeUndefined();
   });
 });
+
+describe("education", () => {
+  const { education, courses, certifications, profile } = content;
+
+  it.each([
+    [
+      0,
+      "utm",
+      "University of Toronto Mississauga",
+      "Specialist Computer Science + Minor Applied Statistics (HBSc)",
+      { start: "2024", end: "2029" },
+      "3.8/4.0",
+    ],
+    [
+      1,
+      "thornhill-ss",
+      "Thornhill Secondary School",
+      "High school diploma",
+      { start: "2020", end: "2024" },
+      undefined,
+    ],
+  ])(
+    "education matches: row %i (%s)",
+    (i, id, school, program, period, gpa) => {
+      const e = education[i];
+      expect(e.id).toBe(id);
+      expect(e.school).toBe(school);
+      expect(e.program).toBe(program);
+      expect(e.period).toEqual(period);
+      expect(e.gpa).toBe(gpa);
+    },
+  );
+
+  it("education has exactly the two records", () => {
+    expect(education.map((e) => e.id)).toEqual(["utm", "thornhill-ss"]);
+  });
+
+  it("highlights match", () => {
+    expect(education[0].highlights).toEqual([]);
+    expect(education[1].highlights).toEqual([
+      "AP score of 5 for Computer Science A and BC Calculus",
+      "Distinction in Waterloo Canadian Computing Contest Senior Division 2023 & 2024",
+      "Distinction in Waterloo Canadian Senior Mathematics Contest 2024",
+      "Honour Society 2021-2024",
+    ]);
+  });
+
+  it("education locations hold no street detail", () => {
+    for (const e of education) expect(e.location).not.toMatch(/\d/);
+  });
+
+  // code|name, in Appendix A.2 order; "-" for no code.
+  const COURSES = [
+    "-|Intro to Information Security",
+    "-|Operating Systems",
+    "-|Fundamentals of Robotics",
+    "CSC209|Software Tools & System Design",
+    "CSCB58|Computer Organization",
+    "MAT223/224|Linear Algebra I & II",
+    "CSC311|Introduction to Machine Learning",
+    "CSC263|Data Structures and Analysis",
+    "CSC207|Software Design",
+    "CSC108/148|Introduction to Computer Science",
+    "STAB52|Introduction to Probability I & II",
+    "CSC236|Introduction to the Theory of Computation",
+    "MGTA01|Introduction to Business",
+  ];
+
+  it("courses match", () => {
+    expect(courses.map((c) => `${c.code ?? "-"}|${c.name}`)).toEqual(COURSES);
+    for (const c of courses.slice(0, 3)) expect("code" in c).toBe(false);
+  });
+
+  it("course names carry no code", () => {
+    for (const c of courses) expect(c.name).not.toContain("(");
+  });
+
+  it("certifications match", () => {
+    expect(certifications.map((c) => c.name)).toEqual([
+      "Emergency First Aid with CPR-B",
+      "Bronze Cross",
+      "Bronze Medallion",
+      "Bronze Star",
+    ]);
+    expect(new Set(certifications.map((c) => c.issuer)).size).toBe(1);
+    for (const c of certifications) expect(c.year).toBeUndefined();
+  });
+
+  it("names are unique", () => {
+    for (const names of [
+      courses.map((c) => c.name),
+      certifications.map((c) => c.name),
+    ]) {
+      expect(new Set(names).size).toBe(names.length);
+    }
+  });
+
+  it("no LaTeX is left", () => {
+    // JSON.stringify doubles a stray backslash, so a kept \& is caught.
+    expect(
+      JSON.stringify({ education, courses, summary: profile.summary }),
+    ).not.toMatch(/\\\\/);
+  });
+});
