@@ -28,6 +28,24 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, next) => {
       .json({ error: { code: err.code, message: err.message } });
     return;
   }
+  // A body-parser failure (bad JSON, too large). Its message can quote the
+  // request, so the text here is fixed.
+  const { status, expose } = err as { status?: unknown; expose?: unknown };
+  if (
+    expose === true &&
+    typeof status === "number" &&
+    status >= 400 &&
+    status < 500
+  ) {
+    const tooLarge = status === 413;
+    res.status(status).json({
+      error: {
+        code: tooLarge ? "payload_too_large" : "bad_request",
+        message: tooLarge ? "Request body too large" : "Bad request",
+      },
+    });
+    return;
+  }
   // Logged, never echoed: the message may hold paths or internals.
   req.log.error(err);
   res.status(500).json({
