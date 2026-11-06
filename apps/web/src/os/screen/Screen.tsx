@@ -12,6 +12,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
+import { os, rehydrateSettings } from "../store";
 import {
   initialWindows,
   type Point,
@@ -106,6 +107,15 @@ export function Screen({ children }: { children: ReactNode }) {
   const left = fullscreen ? 0 : (size.width - box.width * scale) / 2;
   const top = fullscreen ? 0 : (size.height - box.height * scale) / 2;
   const workArea = useMemo(() => workAreaFor(mode, size), [mode, size]);
+
+  // Layout effects, in this order: a child's plain effect runs before its
+  // parent's plain effect but after every layout effect.
+  useLayoutEffect(() => {
+    rehydrateSettings();
+  }, []);
+  useLayoutEffect(() => {
+    os.windows.setScreen({ mode, workArea });
+  }, [mode, workArea]);
 
   const toScreenPoint = useCallback(
     (clientX: number, clientY: number): Point => {

@@ -1,4 +1,5 @@
 import { act, render, renderHook } from "@testing-library/react";
+import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import { hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
@@ -327,3 +328,79 @@ describe("hydration", () => {
     container.remove();
   });
 });
+
+describe("store", () => {
+  const state = () => useOS.getState();
+
+  it("gives the window slice its mode and work area", () => {
+    media = stubMedia(true);
+    mount();
+    resize(390, 844);
+    expect(state().windows.mode).toBe("fullscreen");
+    expect(state().windows.workArea).toEqual(seen.workArea);
+    expect(state().windows.workArea).toEqual({ x: 0, y: 32, w: 390, h: 748 });
+  });
+
+  it("a mode change reaches open windows", () => {
+    os.windows.setAppLookup((id) => ({
+      id,
+      name: id,
+      window: { width: 400, height: 300 },
+      capabilities: { maximize: false },
+      singleton: true,
+    }));
+    mount();
+    os.windows.openApp("a");
+    act(() => media.set(true));
+    expect(state().windows.items[0].maximized).toBe(true);
+    act(() => media.set(false));
+    expect(state().windows.items[0].maximized).toBe(false);
+  });
+
+  it("a laptop resize writes nothing", () => {
+    mount();
+    const before = state().windows;
+    resize(720, 450);
+    expect(state().windows).toBe(before);
+  });
+
+  it("rehydrates settings", () => {
+    seedWallpaper();
+    mount();
+    expect(state().settings.wallpaper).toBe("mono");
+  });
+
+  it("a child's plain effect sees settings and the screen", () => {
+    seedWallpaper();
+    media = stubMedia(true);
+    let wallpaper = "";
+    let mode = "";
+    const note = (w: string, m: string) => {
+      wallpaper = w;
+      mode = m;
+    };
+    function Child() {
+      useEffect(() => {
+        note(
+          useOS.getState().settings.wallpaper,
+          useOS.getState().windows.mode,
+        );
+      }, []);
+      return null;
+    }
+    render(
+      <Screen>
+        <Child />
+      </Screen>,
+    );
+    expect(wallpaper).toBe("mono");
+    expect(mode).toBe("fullscreen");
+  });
+});
+
+function seedWallpaper() {
+  localStorage.setItem(
+    "beselfos:settings",
+    JSON.stringify({ state: { settings: { wallpaper: "mono" } }, version: 0 }),
+  );
+}
