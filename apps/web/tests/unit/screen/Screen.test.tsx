@@ -11,46 +11,7 @@ import {
   type ScreenValue,
 } from "@/os/screen/Screen";
 import { os, useOS } from "@/os/store";
-
-class FakeResizeObserver {
-  static last: FakeResizeObserver;
-  targets = new Set<Element>();
-  observe = vi.fn((el: Element) => {
-    this.targets.add(el);
-  });
-  disconnect = vi.fn(() => {
-    this.targets.clear();
-  });
-  constructor(private cb: ResizeObserverCallback) {
-    FakeResizeObserver.last = this;
-  }
-  trigger(width: number, height: number) {
-    if (this.targets.size === 0) return;
-    this.cb(
-      [{ contentRect: { width, height } } as ResizeObserverEntry],
-      this as unknown as ResizeObserver,
-    );
-  }
-}
-
-function stubMedia(matches: boolean) {
-  const listeners = new Set<() => void>();
-  const query = {
-    matches,
-    addEventListener: (_: string, cb: () => void) => listeners.add(cb),
-    removeEventListener: (_: string, cb: () => void) => listeners.delete(cb),
-  };
-  const matchMedia = vi.fn(() => query);
-  vi.stubGlobal("matchMedia", matchMedia);
-  return {
-    matchMedia,
-    listeners,
-    set(next: boolean) {
-      query.matches = next;
-      listeners.forEach((l) => l());
-    },
-  };
-}
+import { FakeResizeObserver, stubMedia } from "../helpers/browser";
 
 const QUERY =
   "(max-width: 899.98px), (pointer: coarse) and (orientation: portrait)";
