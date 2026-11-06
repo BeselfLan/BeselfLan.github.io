@@ -41,3 +41,29 @@ export function stubMedia(matches: boolean) {
     },
   };
 }
+
+/**
+ * Replaces requestAnimationFrame and cancelAnimationFrame with a queue, so a
+ * test decides when a frame happens. Undo with `vi.unstubAllGlobals()`.
+ */
+export function stubFrames() {
+  let next = 1;
+  const queue = new Map<number, FrameRequestCallback>();
+  vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+    const id = next++;
+    queue.set(id, cb);
+    return id;
+  });
+  vi.stubGlobal("cancelAnimationFrame", (id: number) => {
+    queue.delete(id);
+  });
+  return {
+    pending: () => queue.size,
+    /** Runs every queued callback once. */
+    run() {
+      const batch = [...queue.values()];
+      queue.clear();
+      for (const cb of batch) cb(0);
+    },
+  };
+}
