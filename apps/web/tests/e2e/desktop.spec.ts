@@ -26,10 +26,18 @@ async function rect(locator: Locator) {
   return box;
 }
 
-/** Waits for the desktop to show, with room for a full boot (#74). */
+/**
+ * Waits for the desktop to show, with room for a full boot (#74), and then for
+ * the boot to finish. The desktop is mounted during desktop-enter while the
+ * boot overlay fades for 400 ms, and the stage table accepts Restart and Power
+ * Off only from desktop, the one stage where BootSequence renders nothing.
+ */
 async function openDesktop(page: Page) {
   await page.goto("/");
   await expect(page.locator("[data-desktop]")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator("[data-boot-stage]")).toHaveCount(0, {
+    timeout: 5_000,
+  });
 }
 
 test("the top bar spans the top of the screen", async ({ page }) => {
