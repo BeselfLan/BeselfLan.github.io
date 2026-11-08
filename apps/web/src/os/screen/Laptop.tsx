@@ -4,7 +4,9 @@ import { motion } from "motion/react";
 import type { ReactNode } from "react";
 import { useShallow } from "zustand/react/shallow";
 import "../boot/laptop.css";
-import { laptopPose, OPEN_POSE } from "../boot/laptopPose";
+import { isShutDown, laptopPose, OPEN_POSE } from "../boot/laptopPose";
+import { PowerButton } from "../boot/PowerButton";
+import { useBootReducedMotion } from "../boot/reducedMotion";
 import { useOS } from "../store";
 import { bootContext } from "../store/boot";
 import { useScreenMode } from "./Screen";
@@ -17,9 +19,11 @@ import { useScreenMode } from "./Screen";
 //   attributes, styles and `hidden`, so `Screen` and `BootSequence`'s stage
 //   clock are never remounted by a resize or a rotation.
 // - The pose comes from the boot stage (`laptopPose`), not from an animation
-//   callback, so the lid never sets React state from outside `act`. #14 extends
-//   that table: closing the lid at a shutdown, reduced motion, a pulled-back
-//   shot with a power button.
+//   callback, so the lid never sets React state from outside `act`. #14 used
+//   that table to close the lid at a shutdown, snap every pose under reduced
+//   motion, and show a "Power on" button on the desk once the lid is shut. The
+//   button is the last child of the root, outside the camera, and exists only
+//   after a shutdown, so the server HTML never has it.
 // - Settled means flat. Once the lid is open there is no perspective, no
 //   `preserve-3d` and no transform on the camera or the lid, because
 //   `Screen.toScreenPoint` reads the box's rect and a 3D context blurs text.
@@ -38,7 +42,10 @@ export function Laptop({ children }: { children: ReactNode }) {
   // An object selector needs useShallow under zustand 5.
   const ctx = useOS(useShallow((s) => bootContext(s)));
 
-  const pose = fullscreen ? OPEN_POSE : laptopPose(stage, ctx);
+  const reduced = useBootReducedMotion();
+  const shutDown = useOS((s) => isShutDown(s.boot));
+
+  const pose = fullscreen ? OPEN_POSE : laptopPose(stage, ctx, { reduced });
   const flat = pose.state === "open";
 
   return (
@@ -102,6 +109,9 @@ export function Laptop({ children }: { children: ReactNode }) {
           hidden={fullscreen}
         />
       </motion.div>
+      {/* It shows when the lid has finished closing: after the pose's own
+          transition, which is 0 in fullscreen and under reduced motion. */}
+      {shutDown && <PowerButton delayMs={pose.transition.duration * 1000} />}
     </div>
   );
 }

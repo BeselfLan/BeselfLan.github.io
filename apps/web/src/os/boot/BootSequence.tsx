@@ -13,7 +13,8 @@ import { Button } from "../ui/Button";
 import { newestHeader } from "./BootLog";
 import { BootScreen } from "./BootScreens";
 import { bootLogDuration, buildBootScript } from "./bootScript";
-import { initialMode } from "./mode";
+import { initialMode, markBooted } from "./mode";
+import { useBootReducedMotion } from "./reducedMotion";
 import { createScriptStore, NO_LINES } from "./scriptStore";
 import { bootMachine, type BootStage } from "./stages";
 
@@ -24,11 +25,17 @@ import { bootMachine, type BootStage } from "./stages";
 //   runs the stage clock. It renders nothing at `desktop`.
 // - showsDesktop(stage) and DesktopStage decide when the desktop is mounted,
 //   so the boot can change that without editing page.tsx.
-// #14 adds the skip keys, `?boot=`, the session flag, fast boot, and the
-// shutdown, restart and login views. #75's laptop opens its lid over
-// `lid-opening`, which is a black screen until then. Nothing here reads the
-// URL or storage, and nothing in render reads the clock or `Math.random`: the
-// script is built in an effect, so the server HTML is the `off` screen.
+// #14 (plan 3.4 to 3.6):
+// - The mount effect starts the boot in the mode initialMode() picks from
+//   `?boot=`, deep links, the session flag, reduced motion and the screen.
+// - Any key or press skips during `firmware` and `boot-log`, the two stages
+//   where the Skip button shows. Both come from one table check, so they never
+//   disagree.
+// - Reaching the desktop writes the session flag, so a reload fast-boots.
+// - A fast boot fades from black: it never draws the log it skipped.
+// Nothing in render reads the URL, storage, the clock or `Math.random`: the
+// mode is chosen and the script is built in effects, so the server HTML is the
+// `off` screen.
 
 /** True while the desktop is mounted: the stages where it shows or is leaving. */
 export function showsDesktop(stage: BootStage): boolean {
@@ -64,8 +71,12 @@ export function BootSequence() {
     () => NO_LINES,
   );
 
+  const reduced = useBootReducedMotion();
+  // One check for the Skip button and the listeners below.
+  const canSkip = bootMachine.stageForEvent("skip", stage) !== null;
+
   // Once on mount. The stage check keeps Strict Mode's second run harmless.
-  // #14 reads `window.location.search` here, not useSearchParams.
+  // initialMode() reads `window.location.search`, not useSearchParams.
   useEffect(() => {
     if (useOS.getState().boot.stage === "off") os.boot.start(initialMode());
   }, []);
@@ -80,6 +91,25 @@ export function BootSequence() {
     os.boot.setBootLogMs(bootLogDuration(lines));
   }, [stage, scripts]);
 
+  // Any key, or a press of a mouse, pen or finger, skips. Pointer events cover
+  // all three, so a tap never skips twice. Nothing is prevented, so browser
+  // shortcuts keep working; the page is fixed and has nothing to scroll.
+  useEffect(() => {
+    if (!canSkip) return;
+    const skip = () => os.boot.skip();
+    window.addEventListener("keydown", skip);
+    window.addEventListener("pointerdown", skip);
+    return () => {
+      window.removeEventListener("keydown", skip);
+      window.removeEventListener("pointerdown", skip);
+    };
+  }, [canSkip]);
+
+  // Every kind of boot marks the session, so a reload in this tab fast-boots.
+  useEffect(() => {
+    if (stage === "desktop") markBooted();
+  }, [stage]);
+
   // advance() moves one stage and sets no timer, so each stage sets the next.
   // The stage never waits on the line timers below.
   useEffect(() => {
@@ -87,7 +117,10 @@ export function BootSequence() {
     if (ms === null) return;
     const timer = setTimeout(() => {
       // The last line's timer is due at this instant: draw it before leaving.
-      if (stage === "boot-log") os.boot.setLineIndex(scripts.get().length);
+      // A boot-log that lasts 0 ms is a fast boot, which fades from black.
+      if (stage === "boot-log" && ms > 0) {
+        os.boot.setLineIndex(scripts.get().length);
+      }
       os.boot.advance();
     }, ms);
     return () => clearTimeout(timer);
@@ -133,14 +166,19 @@ export function BootSequence() {
           : undefined
       }
     >
-      <BootScreen stage={stage} durationMs={durationMs ?? 0} lines={printed} />
+      <BootScreen
+        stage={stage}
+        durationMs={durationMs ?? 0}
+        lines={printed}
+        reduced={reduced}
+      />
       {/* The log is aria-hidden. This one polite region repeats the newest
           header, and it exists from the first render, because a live region
           must be in the page before its text changes. */}
       <p aria-live="polite" aria-atomic="true" className="sr-only">
         {newestHeader(printed)}
       </p>
-      {bootMachine.stageForEvent("skip", stage) !== null && (
+      {canSkip && (
         <Button
           className="absolute right-6 bottom-6"
           onClick={() => os.boot.skip()}

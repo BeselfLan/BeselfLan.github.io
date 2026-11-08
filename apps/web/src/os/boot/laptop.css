@@ -5,10 +5,10 @@
  * so a .module.css comes out unscoped with an empty class map. Override: a
  * module, and styles.* in Laptop.tsx, once that rule keeps scoping.
  *
- * There are no keyframes: motion animates the lid and the camera. Whatever
- * depends on the stage (perspective, preserve-3d, the bezel padding) is inline
- * in Laptop.tsx, so a jsdom test can read it; this file is the static art and
- * the layout.
+ * Motion animates the lid and the camera, so the only keyframes are the power
+ * button's fade. Whatever depends on the stage (perspective, preserve-3d, the
+ * bezel padding) is inline in Laptop.tsx, so a jsdom test can read it; this
+ * file is the static art and the layout.
  *
  * The camera and the lid must never get overflow, opacity, filter or
  * clip-path: each one flattens preserve-3d. The desk clips instead.
@@ -190,4 +190,58 @@
   border-radius: 0;
   background: none;
   box-shadow: none;
+}
+
+/*
+ * The "Power on" button after Power Off (#14): a pill on the desk in front of
+ * the closed laptop, outside the camera so its click target is plain 2D. It
+ * fades in after the lid has closed; the delay is inline (animationDelay) and
+ * the keyframes animate opacity only, because transform positions it.
+ */
+@keyframes boot-laptop-power-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.boot-laptop-power {
+  position: absolute;
+  left: 50%;
+  bottom: max(24px, 6vh);
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px 8px 12px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.08);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.18);
+  color: var(--os-panel-fg);
+  font:
+    14px var(--font-ui),
+    sans-serif;
+  cursor: pointer;
+  animation: boot-laptop-power-in 200ms ease-out both;
+}
+
+.boot-laptop-power:hover {
+  background: rgb(255 255 255 / 0.14);
+}
+
+.boot-laptop-power:focus-visible {
+  outline: 2px solid var(--os-orange);
+  outline-offset: 3px;
+}
+
+.boot-laptop-power-glyph {
+  color: var(--os-orange);
+}
+
+/* Fullscreen (D4): no laptop, so the button sits in the middle of the screen. */
+.boot-laptop[data-mode="fullscreen"] .boot-laptop-power {
+  bottom: 50%;
+  transform: translate(-50%, 50%);
 }
