@@ -3,6 +3,12 @@
 import type { ReactNode, SyntheticEvent } from "react";
 import type { DragHandleProps } from "./useDrag";
 
+/**
+ * The bar's height in screen units. AppApi.bounds() subtracts it from the
+ * window, so both read this one number.
+ */
+export const TITLE_BAR_HEIGHT = 40;
+
 export interface TitleBarProps {
   titleId: string;
   title: string;
@@ -82,7 +88,9 @@ export function TitleBar({
       data-titlebar=""
       {...handleProps}
       onDoubleClick={buttons.maximize ? onToggleMaximize : undefined}
-      className="relative flex h-10 shrink-0 items-center bg-white/5 px-2"
+      // After the spread, so the height joins touch-action and user-select.
+      style={{ ...handleProps.style, height: TITLE_BAR_HEIGHT }}
+      className="relative flex shrink-0 items-center bg-white/5 px-2"
     >
       {/* Spans the whole bar with equal padding, so it is centred on the bar,
           not on the space beside the buttons. It cannot take the pointer, or
