@@ -1,0 +1,93 @@
+/*
+ * Keyframes and layers for the boot screens (plan 3.2). A global stylesheet
+ * with boot- names: next.config.ts sends every *.css file through one Tailwind
+ * rule with `as: "*.css"`, and a .module.css file then comes out unscoped with
+ * an empty class map, so a module's classes never applied. Override: a module
+ * once the rule keeps scoping.
+ *
+ * Each stage mounts and unmounts its own screen, so every animation runs once
+ * from its first frame, and its length is set inline (animation-duration) from
+ * the stage table. Only the effects that are decoration sit behind the
+ * reduced-motion query. The progress bar and the fade-out say what is
+ * happening, so they stay.
+ */
+
+@keyframes boot-glow-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes boot-scan-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes boot-fill-bar {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes boot-fade-away {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/* The faint backlight of a screen that has just been switched on. */
+.boot-glow {
+  background: radial-gradient(
+    ellipse at center,
+    rgb(247 247 247 / 0.1),
+    rgb(247 247 247 / 0.03) 45%,
+    transparent 75%
+  );
+}
+
+/* CRT scanlines. Under reduced motion there are none. */
+.boot-scanlines {
+  display: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgb(255 255 255 / 0.07) 0,
+    rgb(255 255 255 / 0.07) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .boot-glow {
+    opacity: 0;
+    animation: boot-glow-in linear forwards;
+  }
+
+  .boot-scanlines {
+    display: block;
+    animation: boot-scan-out linear forwards;
+  }
+}
+
+/* The firmware bar. It is full without the animation, which only draws it. */
+.boot-fill {
+  animation: boot-fill-bar linear both;
+}
+
+/* The printed log leaving while the desktop shows through. */
+.boot-fade-out {
+  animation: boot-fade-away linear forwards;
+}
