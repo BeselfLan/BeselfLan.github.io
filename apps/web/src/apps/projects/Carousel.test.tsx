@@ -106,6 +106,9 @@ const poses = (c: HTMLElement) => [
 ];
 const press = (name: string) =>
   fireEvent.click(screen.getByRole("button", { name }));
+/** A wheel over the stage. Returns false when the event was prevented. */
+const wheel = (c: HTMLElement, deltaY: number, init: WheelEventInit = {}) =>
+  fireEvent.wheel(stageEl(c), { deltaY, ...init });
 
 /**
  * A parent whose own layout effect reads the ring's pose. It runs after its
@@ -319,6 +322,78 @@ describe("Carousel", () => {
       expect(index(container)).toBe("4 / 13");
       expect(vi.getTimerCount()).toBe(0);
     });
+
+    it("lands a wheel at once when it goes quiet", () => {
+      const { container } = render(reduced(ui()));
+      wheel(container, 100);
+      frames(128);
+      // The wheel itself still moves the ring, then the idle snap jumps.
+      expect(ringEl(container).style.transform).toBe(ringTransform(-THETA, 13));
+      expect(index(container)).toBe("2 / 13");
+      expect(vi.getTimerCount()).toBe(0);
+    });
+  });
+
+  describe("the wheel", () => {
+    it("turns the ring directly and snaps 120 ms after the last event", () => {
+      const { container } = render(ui());
+      for (let i = 0; i < 3; i++) {
+        // Prevented, so the page does not scroll or swipe back.
+        expect(wheel(container, 100)).toBe(false);
+      }
+      frames(16);
+      // 3 x -15 degrees, moved directly and not yet snapping.
+      expect(ringEl(container).style.transform).toBe(ringTransform(-45, 13));
+      frames(112);
+      frames(1000);
+      expect(index(container)).toBe("3 / 13");
+      expect(ringEl(container).style.transform).toBe(
+        ringTransform(-2 * THETA, 13),
+      );
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("turns on the larger of the two axes", () => {
+      const { container } = render(ui());
+      fireEvent.wheel(stageEl(container), { deltaX: 200, deltaY: 10 });
+      frames(16);
+      expect(ringEl(container).style.transform).toBe(ringTransform(-30, 13));
+    });
+
+    it("leaves ctrl+wheel to the page", () => {
+      const { container } = render(ui());
+      // Ctrl+wheel and the trackpad pinch zoom the page (WCAG 1.4.4).
+      expect(wheel(container, 100, { ctrlKey: true })).toBe(true);
+      frames(1000);
+      expect(index(container)).toBe("1 / 13");
+      expect(ringEl(container).style.transform).toBe(ringTransform(0, 13));
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("restarts its idle timer on every event", () => {
+      const { container } = render(ui());
+      for (let i = 0; i < 3; i++) wheel(container, 100);
+      frames(100);
+      wheel(container, 100);
+      frames(100);
+      // A timer that was not restarted would already be springing to -2 x θ.
+      expect(ringEl(container).style.transform).toBe(ringTransform(-60, 13));
+      frames(1000);
+      expect(index(container)).toBe("3 / 13");
+    });
+
+    it("gives way to a button pressed during a run", () => {
+      const { container } = render(ui());
+      wheel(container, 100);
+      press("Next item");
+      frames(1000);
+      // The button steps from the nearest item, -θ, to -2 x θ. An idle snap
+      // left pending would retarget the spring at 120 ms and end at -θ.
+      expect(index(container)).toBe("3 / 13");
+      expect(ringEl(container).style.transform).toBe(
+        ringTransform(-2 * THETA, 13),
+      );
+    });
   });
 
   it("sets no React state per frame", () => {
@@ -399,6 +474,24 @@ describe("Carousel", () => {
       frames(1000);
       expect(index(container)).toBe("2 / 13");
     });
+
+    it("ends a wheel run and sits on the nearest item", () => {
+      const { container, rerender } = render(ui());
+      wheel(container, 100);
+      expect(vi.getTimerCount()).toBe(2); // The frame and the idle timer.
+      rerender(ui({ paused: true }));
+      expect(vi.getTimerCount()).toBe(0);
+      expect(ringEl(container).style.transform).toBe(ringTransform(-THETA, 13));
+      expect(index(container)).toBe("2 / 13");
+    });
+
+    it("prevents a wheel and does nothing with it", () => {
+      const { container } = render(ui({ paused: true }));
+      expect(wheel(container, 100)).toBe(false);
+      frames(500);
+      expect(ringEl(container).style.transform).toBe(ringTransform(0, 13));
+      expect(vi.getTimerCount()).toBe(0);
+    });
   });
 
   it("cancels its frame when it unmounts mid-spring", () => {
@@ -410,6 +503,18 @@ describe("Carousel", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("clears the wheel timer and unbinds the stage when it unmounts", () => {
+    const { container, unmount } = render(ui());
+    const stage = stageEl(container);
+    wheel(container, 100);
+    expect(vi.getTimerCount()).toBe(2);
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
+    // The listener is gone: the event is not prevented and starts no timer.
+    expect(fireEvent.wheel(stage, { deltaY: 100 })).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("survives Strict Mode", () => {
     const { container } = render(<StrictMode>{ui()}</StrictMode>);
     expect(ringEl(container).style.transform).toBe(ringTransform(0, 13));
@@ -417,6 +522,17 @@ describe("Carousel", () => {
     expect(vi.getTimerCount()).toBe(0);
     press("Next item");
     frames(1000);
+    expect(index(container)).toBe("2 / 13");
+    expect(ringEl(container).style.transform).toBe(ringTransform(-THETA, 13));
+  });
+
+  it("binds the wheel once under Strict Mode", () => {
+    const { container } = render(<StrictMode>{ui()}</StrictMode>);
+    wheel(container, 200); // -30 degrees
+    frames(128);
+    frames(1000);
+    // A listener left over from the first attach would double it to -60 and
+    // end on "3 / 13".
     expect(index(container)).toBe("2 / 13");
     expect(ringEl(container).style.transform).toBe(ringTransform(-THETA, 13));
   });
