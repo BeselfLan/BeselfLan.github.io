@@ -29,6 +29,12 @@ describe("the server render is the closed laptop", () => {
     expect(error).not.toHaveBeenCalled();
   });
 
+  it("has no power button: that comes only after a shutdown", () => {
+    const html = renderToString(<Laptop>{null}</Laptop>);
+    expect(html).not.toContain("data-power-button");
+    expect(html).not.toContain("Power on");
+  });
+
   it("draws the deck and the lid back, which the settled laptop hides", () => {
     const html = renderToString(<Laptop>{null}</Laptop>);
     expect(html).toContain("data-laptop-deck");
