@@ -1,0 +1,25 @@
+# Used by deploy/docker-compose.yml. API_SITE comes from deploy/.env: a host
+# name gets automatic HTTPS, and ":80" serves plain HTTP for a local run.
+{
+	# Nothing uses the admin API.
+	admin off
+}
+
+{$API_SITE} {
+	# Media straight from the volume, with Range and ETag. Names are not
+	# content-hashed, so a re-encoded demo must reach browsers within a day.
+	handle_path /media/files/* {
+		root * /media
+		header Cache-Control "public, max-age=86400"
+		header Cross-Origin-Resource-Policy cross-origin
+		header X-Content-Type-Options nosniff
+		file_server {
+			hide .*
+		}
+	}
+	# Everything else goes to the API. Caddy replaces X-Forwarded-For from an
+	# untrusted client, so the API sees exactly one hop.
+	handle {
+		reverse_proxy api:8080
+	}
+}

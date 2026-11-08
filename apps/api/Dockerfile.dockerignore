@@ -1,0 +1,11 @@
+# The context is the repo root. Send only what the image copies.
+*
+!package.json
+!package-lock.json
+!apps/api/package.json
+!apps/api/tsconfig.json
+!apps/api/tsconfig.build.json
+!apps/api/src
+!apps/web/package.json
+!packages/content/package.json
+!packages/content/src/schema.ts
