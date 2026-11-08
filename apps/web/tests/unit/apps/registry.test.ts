@@ -33,6 +33,13 @@ const V1 = ["projects", "skills", "video-player", "about", "hello"];
 const onlyV1 = (list: readonly string[]) =>
   list.filter((id) => V1.includes(id));
 
+// How long a test waits for an app's lazy chunk. Testing Library's default
+// is 1 s, and the Projects chunk has taken longer on a busy host (#123).
+// page.test.tsx also waits 5 s for a lazy app's heading. Times the number of
+// v1 apps, it stays below the 30 s timeout of "every app renders through
+// AppHost", so a chunk that never loads fails with the name it waited for.
+const CHUNK_TIMEOUT_MS = 5000;
+
 function definitionOf(id: string): AnyAppDefinition {
   const def = getApp(id);
   if (!def) throw new Error(`no app "${id}" in the registry`);
@@ -236,7 +243,11 @@ describe("the registry", () => {
       );
       if (V1.includes(app.id)) {
         expect(
-          await screen.findByRole("heading", { name: new RegExp(app.name) }),
+          await screen.findByRole(
+            "heading",
+            { name: new RegExp(app.name) },
+            { timeout: CHUNK_TIMEOUT_MS },
+          ),
           app.id,
         ).toBeTruthy();
       } else {
@@ -248,7 +259,7 @@ describe("the registry", () => {
               view.container.querySelector("[data-app-skeleton]"),
               app.id,
             ).toBeNull(),
-          { timeout: 5000 },
+          { timeout: CHUNK_TIMEOUT_MS },
         );
         expect(screen.queryByRole("alert"), app.id).toBeNull();
       }
@@ -269,7 +280,11 @@ describe("the registry", () => {
       ),
     );
     expect(
-      await screen.findByRole("heading", { name: "Hello, world" }),
+      await screen.findByRole(
+        "heading",
+        { name: "Hello, world" },
+        { timeout: CHUNK_TIMEOUT_MS },
+      ),
     ).toBeTruthy();
   });
 
