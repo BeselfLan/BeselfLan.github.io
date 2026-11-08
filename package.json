@@ -2,6 +2,7 @@
   "name": "beselfos",
   "version": "0.0.0",
   "private": true,
+  "type": "module",
   "workspaces": [
     "apps/*",
     "packages/*"
@@ -17,6 +18,7 @@
     "test": "npm run test --workspaces --if-present",
     "test:e2e": "npm run test:e2e -w apps/web",
     "format": "npm run format --workspaces --if-present",
+    "new-app": "node scripts/new-app.ts",
     "check": "npm run lint && npm run typecheck && npm run test"
   },
   "devDependencies": {

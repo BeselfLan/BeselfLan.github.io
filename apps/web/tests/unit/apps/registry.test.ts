@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createElement, lazy, type ComponentType } from "react";
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   apps,
@@ -25,6 +25,13 @@ import { os, useOS } from "@/os/store";
 import { WindowIdContext } from "@/os/window/useWindowVisible";
 
 const ids = () => apps.map((a) => a.id);
+
+// The five v1 apps, pinned first and in order. `npm run new-app` appends more
+// after them, so the tests below accept extra apps but never fewer or
+// reordered v1 ones.
+const V1 = ["projects", "skills", "video-player", "about", "hello"];
+const onlyV1 = (list: readonly string[]) =>
+  list.filter((id) => V1.includes(id));
 
 function definitionOf(id: string): AnyAppDefinition {
   const def = getApp(id);
@@ -60,13 +67,7 @@ beforeEach(() => {
 
 describe("the registry", () => {
   it("lists the five v1 apps", () => {
-    expect(ids()).toEqual([
-      "projects",
-      "skills",
-      "video-player",
-      "about",
-      "hello",
-    ]);
+    expect(ids().slice(0, 5)).toEqual(V1);
   });
 
   it("ids are unique and kebab-case", () => {
@@ -74,7 +75,7 @@ describe("the registry", () => {
       expect(id).toMatch(/^[a-z][a-z0-9]*(-[a-z0-9]+)*$/);
     }
     expect(new Set(ids()).size).toBe(ids().length);
-    expect(indexById(apps).size).toBe(5);
+    expect(indexById(apps).size).toBe(ids().length);
 
     expect(() =>
       indexById([fake("twin"), fake("other"), fake("twin")]),
@@ -129,7 +130,7 @@ describe("the registry", () => {
         singleton: true,
       },
     ];
-    expect(rows.map((r) => r.id).sort()).toEqual(ids().sort());
+    expect(rows.map((r) => r.id).sort()).toEqual([...V1].sort());
 
     for (const row of rows) {
       const def = definitionOf(row.id);
@@ -197,11 +198,16 @@ describe("the registry", () => {
   });
 
   it("dock and grid lists", () => {
-    expect(dockApps.map((a) => a.id)).toEqual(["projects", "skills", "about"]);
+    // An app added by new-app may join either list; the v1 apps keep theirs.
+    expect(onlyV1(dockApps.map((a) => a.id))).toEqual([
+      "projects",
+      "skills",
+      "about",
+    ]);
     const grid = gridApps.map((a) => a.id);
     expect(grid).toContain("hello");
     expect(grid).not.toContain("video-player");
-    expect(grid).toEqual(["projects", "skills", "about", "hello"]);
+    expect(onlyV1(grid)).toEqual(["projects", "skills", "about", "hello"]);
   });
 
   it("the lookup returns the same object every call", () => {
@@ -228,10 +234,24 @@ describe("the registry", () => {
           renderContent(windowId),
         ),
       );
-      expect(
-        await screen.findByRole("heading", { name: new RegExp(app.name) }),
-        app.id,
-      ).toBeTruthy();
+      if (V1.includes(app.id)) {
+        expect(
+          await screen.findByRole("heading", { name: new RegExp(app.name) }),
+          app.id,
+        ).toBeTruthy();
+      } else {
+        // An app added by new-app starts as a copy of Hello, whose heading is
+        // "Hello, world", so only check that it loaded and did not crash.
+        await waitFor(
+          () =>
+            expect(
+              view.container.querySelector("[data-app-skeleton]"),
+              app.id,
+            ).toBeNull(),
+          { timeout: 5000 },
+        );
+        expect(screen.queryByRole("alert"), app.id).toBeNull();
+      }
       view.unmount();
     }
   }, 30_000);
@@ -297,7 +317,17 @@ describe("the registry", () => {
 
     const entries = at("// new-app: entries");
     expect(entries).toHaveLength(1);
-    expect(lines[entries[0] - 1]).toBe("hello,");
     expect(lines[entries[0] + 1]).toBe("];");
+    // The marker is the last line in the array. The v1 apps come first, ending
+    // with hello, and every line between hello and the marker is an entry that
+    // new-app added: an identifier and a comma.
+    const entry = /^[a-z][A-Za-z0-9]*,$/;
+    expect(lines[entries[0] - 1]).toMatch(entry);
+    const hello = lines.indexOf("hello,");
+    expect(hello).toBeGreaterThan(-1);
+    expect(hello).toBeLessThan(entries[0]);
+    for (const line of lines.slice(hello + 1, entries[0])) {
+      expect(line).toMatch(entry);
+    }
   });
 });

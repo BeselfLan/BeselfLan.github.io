@@ -1,13 +1,13 @@
 import { lazy } from "react";
 import { defineApp } from "@/os/apps/types";
 
-// The example app (plan 2.4): `npm run new-app <id>` copies this folder. Keep
-// it plain. The script swaps the identifier `TemplateApp` and the two quoted
-// literals "hello" (the id) and "Hello" (the name), nothing else, so those
-// literals appear only where the id and the name are written.
+// The example app (plan 2.4). `npm run new-app <id>` copies this folder. It
+// renames identifiers that start with `Template` and rewrites the `const ID`
+// line and the `name` line, nothing else, so write the id and the name only on
+// those two lines. docs/APPS.md has the steps.
 const ID = "hello";
 
-/** What `openApp("hello", args)` passes the component. */
+/** What `openApp(ID, args)` passes the component. */
 export interface TemplateArgs {
   name?: string;
 }
