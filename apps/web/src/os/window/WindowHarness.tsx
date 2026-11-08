@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Screen } from "@/os/screen/Screen";
 import { os } from "@/os/store";
 import type { WindowApp } from "@/os/store/windows";
+import { registerIconRectGetter } from "./iconRect";
 import { WindowLayer, type WindowChrome } from "./WindowLayer";
 
 type HarnessApp = WindowApp & { chrome: WindowChrome };
@@ -62,6 +63,7 @@ const renderContent = (): ReactNode => <Counter />;
 
 /** Used only by the dev-only e2e route. */
 export function WindowHarness() {
+  const iconRef = useRef<HTMLDivElement>(null);
   // A plain effect: it must run after Screen's layout effects. Singletons
   // make the second run under Strict Mode harmless, and Beta still ends on top.
   useEffect(() => {
@@ -69,6 +71,17 @@ export function WindowHarness() {
     os.windows.openApp("alpha");
     os.windows.openApp("beta");
   }, []);
+  // A stand-in for the dock: Alpha has an icon to fly to and Beta has none, so
+  // it fades in place. The effect returns the unregister.
+  useEffect(
+    () =>
+      registerIconRectGetter((appId) =>
+        appId === "alpha"
+          ? (iconRef.current?.getBoundingClientRect() ?? null)
+          : null,
+      ),
+    [],
+  );
   return (
     <div className="fixed inset-0">
       <Screen>
@@ -83,6 +96,14 @@ export function WindowHarness() {
           >
             Open Alpha
           </button>
+          {/* 48 screen units square, clear of both windows, the overlay and
+              the empty-desktop probe. */}
+          <div
+            ref={iconRef}
+            data-testid="harness-dock-icon"
+            className="absolute h-12 w-12 rounded-os-md bg-white/20"
+            style={{ left: 8, top: 420 }}
+          />
         </div>
         <WindowLayer chromeOf={chromeOf} renderContent={renderContent}>
           {/* Inside Beta, clear of the overlap and of both title bars. */}

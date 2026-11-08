@@ -26,6 +26,35 @@ export const frame = (page: Page, id: string) =>
 const titleBar = (page: Page, id: string) =>
   frame(page, id).locator("[data-titlebar]");
 
+/** The panel motion animates: the only child of the frame. */
+const surface = (page: Page, id: string) =>
+  frame(page, id).locator(":scope > div");
+
+async function centre(locator: Locator) {
+  const box = await rect(locator);
+  return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+}
+
+/**
+ * Presses a title bar button in the page and waits one animation frame, then
+ * reports whether the frame is still attached and its computed visibility. A
+ * fade is longer than a frame, so it has not ended yet.
+ */
+function pressAndWaitFrame(page: Page, id: string, label: string) {
+  return page.evaluate(
+    async ([windowId, name]) => {
+      const el = document.querySelector(`[data-window-id="${windowId}"]`)!;
+      el.querySelector<HTMLElement>(`[aria-label="${name}"]`)!.click();
+      await new Promise(requestAnimationFrame);
+      return {
+        attached: el.isConnected,
+        visibility: getComputedStyle(el).visibility,
+      };
+    },
+    [id, label],
+  );
+}
+
 /** The id of the window under a client point, or null. */
 async function topWindowAt(page: Page, x: number, y: number) {
   return page.evaluate(
@@ -256,6 +285,64 @@ test("minimise and restore keep the app's state, and close removes it", async ({
   await expect(frame(page, "alpha")).toHaveCount(0);
   await page.getByRole("button", { name: "Open Alpha" }).click();
   await expect(counter).toHaveText("Pressed 0");
+});
+
+test("minimise and restore round trip with animation", async ({ page }) => {
+  await openWindow(page, 960, 600, 2 / 3);
+  const alpha = frame(page, "alpha");
+  const before = await rect(alpha);
+
+  // One frame after the press the window is still drawn, so it is animating.
+  const midway = await pressAndWaitFrame(page, "alpha", "Minimise");
+  expect(midway).toEqual({ attached: true, visibility: "visible" });
+  await expect(alpha).toBeHidden();
+  // It ended on the dock icon, not where it was.
+  const icon = await centre(page.getByTestId("harness-dock-icon"));
+  const ended = await centre(surface(page, "alpha"));
+  expect(Math.abs(ended.x - icon.x)).toBeLessThanOrEqual(2);
+  expect(Math.abs(ended.y - icon.y)).toBeLessThanOrEqual(2);
+
+  await page.getByRole("button", { name: "Open Alpha" }).click();
+  await expect(async () => {
+    const outer = await rect(alpha);
+    const inner = await rect(surface(page, "alpha"));
+    for (const k of ["x", "y", "width", "height"] as const) {
+      expect(Math.abs(outer[k] - before[k])).toBeLessThanOrEqual(1);
+      expect(Math.abs(inner[k] - outer[k])).toBeLessThanOrEqual(1);
+    }
+  }).toPass();
+  await expect(alpha).toBeVisible();
+});
+
+test("minimise without an icon fades in place", async ({ page }) => {
+  await openWindow(page, 960, 600, 2 / 3);
+  const midway = await pressAndWaitFrame(page, "beta", "Minimise");
+  expect(midway.visibility).toBe("visible");
+  await expect(frame(page, "beta")).toBeHidden();
+  const outer = await centre(frame(page, "beta"));
+  const inner = await centre(surface(page, "beta"));
+  expect(Math.abs(inner.x - outer.x)).toBeLessThanOrEqual(1);
+  expect(Math.abs(inner.y - outer.y)).toBeLessThanOrEqual(1);
+});
+
+test("close fades out", async ({ page }) => {
+  await openWindow(page, 960, 600, 2 / 3);
+  const midway = await pressAndWaitFrame(page, "alpha", "Close");
+  // Still in the document for the fade.
+  expect(midway.attached).toBe(true);
+  await expect(frame(page, "alpha")).toHaveCount(0, { timeout: 500 });
+});
+
+test("reduced motion fades in place", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await openWindow(page, 960, 600, 2 / 3);
+  // Alpha has an icon, and still does not fly to it.
+  await frame(page, "alpha").getByRole("button", { name: "Minimise" }).click();
+  await expect(frame(page, "alpha")).toBeHidden();
+  const outer = await centre(frame(page, "alpha"));
+  const inner = await centre(surface(page, "alpha"));
+  expect(Math.abs(inner.x - outer.x)).toBeLessThanOrEqual(1);
+  expect(Math.abs(inner.y - outer.y)).toBeLessThanOrEqual(1);
 });
 
 test("maximise fills the work area", async ({ page }) => {
