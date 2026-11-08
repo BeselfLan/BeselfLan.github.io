@@ -47,7 +47,7 @@ describe("Desktop", () => {
     expect(document.querySelectorAll("[data-wallpaper]")).toHaveLength(1);
   });
 
-  it("puts the wallpaper and the signature under the windows", () => {
+  it("puts the windows between the wallpaper and the top bar", () => {
     mount();
     expect(document.querySelectorAll('[data-testid="layer"]')).toHaveLength(1);
     const layer = q('[data-testid="layer"]')!;
@@ -55,6 +55,9 @@ describe("Desktop", () => {
     const signature = q("[data-signature]")!;
     expect(before(wallpaper, layer)).toBe(true);
     expect(before(signature, layer)).toBe(true);
+    // The layer is isolate: a bar placed before it would paint under the windows.
+    expect(before(layer, q("[data-topbar]")!)).toBe(true);
+    expect(document.querySelectorAll("[data-topbar]")).toHaveLength(1);
 
     // The root adds nothing to the stacking: the layer is isolate, and a
     // z-index or isolate here would change what paints above the windows.

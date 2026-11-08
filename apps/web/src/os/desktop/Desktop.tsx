@@ -5,6 +5,7 @@ import { gridApps } from "../apps/registry";
 import { os } from "../store";
 import { Button } from "../ui/Button";
 import { Signature } from "./Signature";
+import { TopBar } from "./TopBar";
 import { Wallpaper } from "./Wallpaper";
 
 // The desktop surface (plan 4.1, #77). `children` is the window layer, and it
@@ -21,6 +22,7 @@ export function Desktop({ children }: { children: ReactNode }) {
       <Wallpaper />
       <Signature />
       {children}
+      <TopBar />
       <nav
         aria-label="Apps"
         className="absolute top-12 right-4 flex flex-col gap-2"
