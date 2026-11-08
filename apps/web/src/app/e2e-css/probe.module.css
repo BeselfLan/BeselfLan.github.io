@@ -1,0 +1,4 @@
+/* Dev-only probe for #86: a scoped module class. */
+.probe {
+  color: rgb(1, 2, 3);
+}
