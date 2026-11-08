@@ -85,14 +85,16 @@ export const WindowFrame = memo(function WindowFrame({
 }: WindowFrameProps) {
   const [selectWindow] = useState(() => lastKnownWindow(id, openedAt));
   const win = useOS(selectWindow);
-  const focused = useOS((s) => focusedWindow(s)?.id === id);
+  const present = useIsPresent();
+  // A fading frame is not focused, even when its id is: the same id may have
+  // been reopened, and that is the new frame.
+  const focused = useOS((s) => focusedWindow(s)?.id === id) && present;
   const fullscreen = useOS((s) => s.windows.mode === "fullscreen");
   const area = useOS((s) => s.windows.workArea);
   const { dragging, handleProps } = useDrag(id);
   const titleId = useId();
   const screen = useScreen();
   const reduced = useReducedMotionConfig() ?? false;
-  const present = useIsPresent();
   // Which end the surface last reached, so the outer element is hidden only
   // after the minimise animation has played.
   const [settled, setSettled] = useState<"shown" | "minimized">("shown");

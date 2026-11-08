@@ -107,8 +107,12 @@ describe("close", () => {
     expect(frameOf("a")!.classList.contains("pointer-events-auto")).toBe(false);
     expect(cleanup).not.toHaveBeenCalled();
 
-    await waitFor(() => expect(frameOf("a")).toBeNull());
-    expect(cleanup).toHaveBeenCalledTimes(1);
+    // React removes the node, then runs the passive cleanup in a later flush,
+    // so both are waited for together.
+    await waitFor(() => {
+      expect(frameOf("a")).toBeNull();
+      expect(cleanup).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("a closing frame keeps its last state", async () => {
@@ -137,13 +141,22 @@ describe("close", () => {
 
     act(() => void os.windows.closeWindow("a"));
     open("a");
-    expect(document.querySelectorAll('[data-window-id="a"]')).toHaveLength(2);
+    const both = [...document.querySelectorAll('[data-window-id="a"]')];
+    expect(both).toHaveLength(2);
+    // Only the new frame is focused; the fading one is inert and unfocused.
+    const fading = both.filter((el) => el.hasAttribute("inert"));
+    expect(fading).toHaveLength(1);
+    expect(fading[0].hasAttribute("data-focused")).toBe(false);
+    expect(
+      both.find((el) => el !== fading[0])!.hasAttribute("data-focused"),
+    ).toBe(true);
 
-    await waitFor(() =>
-      expect(document.querySelectorAll('[data-window-id="a"]')).toHaveLength(1),
-    );
-    // The first app is gone and the second is fresh.
-    expect(cleanup).toHaveBeenCalledTimes(1);
+    // The first app is gone, which is the node and its cleanup together.
+    await waitFor(() => {
+      expect(document.querySelectorAll('[data-window-id="a"]')).toHaveLength(1);
+      expect(cleanup).toHaveBeenCalledTimes(1);
+    });
+    // The second app is fresh.
     expect(screen.getByTestId("counter").textContent).toBe("n=0");
     expect(frameOf("a")!.hasAttribute("inert")).toBe(false);
   });
@@ -240,6 +253,34 @@ describe("minimise", () => {
     expect(hidden("a")).toBe(false);
     await settledHidden("a");
     expect(surface("a").style.opacity).toBe("0");
+  });
+
+  it("reads the icon getter when a minimise starts, not while rendering", async () => {
+    register({ id: "a" }, { id: "b", at: { x: 400, y: 250 } });
+    mountLayer();
+    open("a");
+    open("b");
+    const getter = vi.fn(() => ({
+      left: 100,
+      top: 400,
+      width: 48,
+      height: 48,
+    }));
+    unregister = registerIconRectGetter(getter);
+    await waitFor(() => expect(surface("b").style.opacity).toBe("1"));
+
+    // A drag of a, then a raise of b: both re-render frames, neither minimises.
+    fireEvent.pointerDown(titleBarOf("a")!, ptr());
+    fireEvent.pointerMove(titleBarOf("a")!, ptr({ clientX: 360 }));
+    act(() => frames.run());
+    fireEvent.pointerUp(titleBarOf("a")!, ptr({ clientX: 360 }));
+    fireEvent.pointerDown(titleBarOf("b")!, ptr());
+    fireEvent.pointerUp(titleBarOf("b")!, ptr());
+    expect(getter).not.toHaveBeenCalled();
+
+    act(() => os.windows.minimizeWindow("a"));
+    await settledHidden("a");
+    expect(getter).toHaveBeenCalledWith("a");
   });
 
   it("a minimise cut short by a restore does not hide the next one", async () => {

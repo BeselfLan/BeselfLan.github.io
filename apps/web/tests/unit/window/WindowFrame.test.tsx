@@ -222,8 +222,12 @@ describe("WindowFrame", () => {
     fireEvent.click(titleBarOf("a")!.querySelector('[aria-label="Close"]')!);
     expect(frameOf("a")).not.toBeNull();
     expect(cleanup).not.toHaveBeenCalled();
-    await waitFor(() => expect(frameOf("a")).toBeNull());
-    expect(cleanup).toHaveBeenCalledTimes(1);
+    // React removes the node, then runs the passive cleanup in a later flush,
+    // so both are waited for together.
+    await waitFor(() => {
+      expect(frameOf("a")).toBeNull();
+      expect(cleanup).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("puts the content in an isolate wrapper", () => {
