@@ -18,6 +18,16 @@ test.afterEach(() => {
   expect(errors).toEqual([]);
 });
 
+// An opt-in CPU throttle (#124): BOOT_CPU_THROTTLE=4 slows the page's main
+// thread four times through the DevTools protocol, as a stand-in for a slow
+// CI runner. Unset, nothing changes.
+const THROTTLE = Number(process.env.BOOT_CPU_THROTTLE ?? "1");
+test.beforeEach(async ({ page }) => {
+  if (!(THROTTLE > 1)) return;
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Emulation.setCPUThrottlingRate", { rate: THROTTLE });
+});
+
 // The first request compiles the route, and that must not count against the
 // timings below.
 test.beforeAll(async ({ browser }) => {
@@ -55,15 +65,87 @@ const DESKTOP_UP = () =>
     ? performance.now()
     : 0;
 
-test("a fresh context reaches the desktop in under 6 s", async ({ page }) => {
-  await page.goto("/");
-  const at = await inFrame(page, DESKTOP_UP);
-  // Under next dev, from the start of the navigation. The upper bound is a
-  // slow log; the lower bound is the stub's skip boot, which was done in under
-  // a second.
-  expect(at).toBeLessThan(6000);
-  expect(at).toBeGreaterThanOrEqual(4000);
-  await expect(page.locator("[data-desktop]")).toBeVisible();
+// The boot's own clock (#124): BootSequence marks each stage when it starts
+// that stage's timer (os/boot/trace.ts), named "beselfos:boot:<stage>", with
+// { stage, mode, ms } in its detail. `at` is the mark's time since navigation.
+interface BootMark {
+  stage: string;
+  mode: string;
+  ms: number | null;
+  at: number;
+}
+
+/** The marks of the newest boot in this page, from its first stage to the desktop. */
+async function bootMarks(page: Page): Promise<BootMark[]> {
+  // The desktop mark is written in an effect, which can come a frame after
+  // the DOM shows the desktop.
+  await inFrame(page, () => {
+    const names = performance
+      .getEntriesByType("mark")
+      .map((m) => m.name)
+      .filter((n) => n.startsWith("beselfos:boot:"));
+    return names.at(-1) === "beselfos:boot:desktop";
+  });
+  const marks: BootMark[] = await page.evaluate(() =>
+    performance
+      .getEntriesByType("mark")
+      .filter((m) => m.name.startsWith("beselfos:boot:"))
+      .map((m) => ({ ...(m as PerformanceMark).detail, at: m.startTime })),
+  );
+  // Strict Mode marks the mount's `off` twice under next dev; a restart starts
+  // at `restarting`.
+  const first = marks.findLastIndex(
+    (m) => m.stage === "lid-opening" || m.stage === "restarting",
+  );
+  expect(first, "no boot mark").toBeGreaterThanOrEqual(0);
+  return marks.slice(first);
+}
+
+// A starved browser can stretch one boot past 6 s on a busy host (#124: one
+// run in 11 at a 4x CPU throttle). A boot that is slow by design fails both
+// attempts, because the scheduled total and the stage timers repeat exactly;
+// a stall rarely repeats, and Playwright reports the pass as flaky.
+// Override: delete the configure line and accept the rare failure.
+test.describe("the full boot's time", () => {
+  test.describe.configure({ retries: 1 });
+
+  test("a fresh context reaches the desktop in under 6 s", async ({
+    page,
+  }, testInfo) => {
+    await page.goto("/");
+    await inFrame(page, DESKTOP_UP);
+    const marks = await bootMarks(page);
+    expect(marks.map((m) => m.stage)).toEqual([
+      "lid-opening",
+      "power-on",
+      "firmware",
+      "boot-log",
+      "desktop-enter",
+      "desktop",
+    ]);
+    for (const m of marks) expect(m.mode, m.stage).toBe("full");
+    // What the stage clock scheduled, which no host can stretch: 3.2's fixed
+    // stages total 2200 ms, and the log is capped at 2600 (LOG_MAX_MS, #73).
+    const scheduled = marks.reduce((sum, m) => sum + (m.ms ?? 0), 0);
+    // How long it took, from the first stage's mark to the desktop's. Loading
+    // the page comes before the first mark and is not counted: a busy host
+    // stretches it, most of all under next dev (#124). No stage ends early.
+    const took = marks.at(-1)!.at - marks[0].at;
+    // Every attempt prints its numbers before any timing assertion can stop it,
+    // so a stall shows which stage absorbed the time.
+    const offsets = marks
+      .slice(1)
+      .map((m) => `${m.stage} +${Math.round(m.at - marks[0].at)}`)
+      .join(", ");
+    console.log(
+      `boot (attempt ${testInfo.retry + 1}): first stage at ${Math.round(marks[0].at)} ms, scheduled ${scheduled} ms, took ${Math.round(took)} ms; ${offsets}`,
+    );
+    expect(scheduled, "scheduled ms").toBeGreaterThanOrEqual(4000);
+    expect(scheduled, "scheduled ms").toBeLessThanOrEqual(4800);
+    expect(took, "the boot took (ms)").toBeGreaterThanOrEqual(scheduled - 50);
+    expect(took, "the boot took (ms)").toBeLessThan(6000);
+    await expect(page.locator("[data-desktop]")).toBeVisible();
+  });
 });
 
 test("stages play in order with the 3.2 durations", async ({ page }) => {
@@ -582,8 +664,23 @@ const lastedOf = (rs: Run[], stage: string) => {
 /**
  * A fast boot: the first stage to the desktop is quick (a full boot takes 4400
  * ms or more), the log is never drawn, and it fades from black.
+ *
+ * Scheduled time is checked on the app's own clock, first: contract 4.3 says
+ * every boot stage is 0 ms and desktop-enter 400, and no host can stretch that.
+ * A 0 ms stage still lasts a frame, and a frame took 134 to 188 ms on a loaded
+ * host (#124), so the wall time is checked in frames, with room, below.
  */
-function expectFastBoot(frames: Frame[]) {
+async function expectFastBoot(page: Page) {
+  expect((await bootMarks(page)).map((m) => [m.stage, m.mode, m.ms])).toEqual([
+    ["lid-opening", "fast", 0],
+    ["power-on", "fast", 0],
+    ["firmware", "fast", 0],
+    ["boot-log", "fast", 0],
+    ["desktop-enter", "fast", 400],
+    ["desktop", "fast", null],
+  ]);
+
+  const frames = await readFrames(page);
   const rs = runs(frames);
   const gone = rs.find((r) => r.stage === "gone");
   expect(rs.length, "no boot stage was recorded").toBeGreaterThan(1);
@@ -593,9 +690,6 @@ function expectFastBoot(frames: Frame[]) {
   expect(enter).toBeGreaterThanOrEqual(300);
   expect(enter).toBeLessThanOrEqual(1000);
   expect(frames.filter((f) => f.lines > 0)).toHaveLength(0);
-  for (const [i, r] of rs.entries()) {
-    if (r.stage === "boot-log") expect(lasted(rs, i)).toBeLessThanOrEqual(100);
-  }
 }
 
 const touching = (a: Rect, b: Rect) =>
@@ -687,7 +781,7 @@ test.describe("fast boot", () => {
 
     await page.reload();
     await afterBoot(page);
-    expectFastBoot(await readFrames(page));
+    await expectFastBoot(page);
   });
 
   test("?boot=full beats the session flag and a deep link", async ({
@@ -709,7 +803,7 @@ test.describe("fast boot", () => {
     await page.addInitScript(record);
     await page.goto("/?app=hello");
     await afterBoot(page);
-    expectFastBoot(await readFrames(page));
+    await expectFastBoot(page);
     await expect(hello(page)).toBeVisible();
   });
 
@@ -718,7 +812,7 @@ test.describe("fast boot", () => {
     await page.addInitScript(record);
     await page.goto("/");
     await afterBoot(page);
-    expectFastBoot(await readFrames(page));
+    await expectFastBoot(page);
   });
 
   test("reduced motion fast-boots, and a forced full boot has no lid or CRT motion", async ({
@@ -728,7 +822,7 @@ test.describe("fast boot", () => {
     await page.addInitScript(record);
     await page.goto("/");
     await afterBoot(page);
-    expectFastBoot(await readFrames(page));
+    await expectFastBoot(page);
 
     // The flag is set by now, and ?boot=full overrides it.
     await page.goto("/?boot=full");

@@ -1,4 +1,5 @@
 import { StrictMode } from "react";
+import { renderToString } from "react-dom/server";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { os, useOS } from "@/os/store";
@@ -12,6 +13,7 @@ import { LOCK_NOTICE, power } from "../desktop/power";
 import { BootSequence } from "./BootSequence";
 import { BOOTED_KEY } from "./mode";
 import { REDUCED_QUERY } from "./reducedMotion";
+import type { BootMarkDetail } from "./trace";
 import {
   bootLogDuration,
   buildBootScript,
@@ -886,5 +888,97 @@ describe("the login stage", () => {
     expect(notices()).toEqual([expect.objectContaining(LOCK_NOTICE)]);
     expect(stage()).toBe("desktop");
     expect(root()).toBeNull();
+  });
+});
+
+describe("boot marks (#124)", () => {
+  // Node's `performance` is shared by the tests of a worker.
+  beforeEach(() => {
+    performance.clearMarks();
+  });
+
+  interface Row {
+    name: string;
+    stage: string;
+    mode: string;
+    ms: number | null;
+  }
+
+  // The literal prefix, on purpose: renaming BOOT_MARK fails here first, which
+  // is the reminder to update boot.spec.ts, which reads the same names.
+  const row = (stage: string, mode: string, ms: number | null): Row => ({
+    name: `beselfos:boot:${stage}`,
+    stage,
+    mode,
+    ms,
+  });
+
+  /** The marks of the newest boot: from its last `lid-opening` on. */
+  function marks(): Row[] {
+    const all = performance
+      .getEntriesByType("mark")
+      .filter((m) => m.name.startsWith("beselfos:boot:"))
+      .map((m) => ({
+        name: m.name,
+        ...((m as PerformanceMark).detail as BootMarkDetail),
+      }));
+    const first = all.findLastIndex((m) => m.stage === "lid-opening");
+    if (first < 0) throw new Error("no lid-opening mark");
+    return all.slice(first);
+  }
+
+  it("a full boot marks each stage with the ms its clock scheduled", () => {
+    render(<BootSequence />);
+    toDesktop();
+    expect(marks()).toEqual([
+      row("lid-opening", "full", 1000),
+      row("power-on", "full", 300),
+      row("firmware", "full", 500),
+      row("boot-log", "full", boot().bootLogMs),
+      row("desktop-enter", "full", 400),
+      row("desktop", "full", null),
+    ]);
+    // The bounds that boot.spec.ts holds the total to.
+    const scheduled = marks().reduce((sum, m) => sum + (m.ms ?? 0), 0);
+    expect(scheduled).toBeGreaterThanOrEqual(4000);
+    expect(scheduled).toBeLessThanOrEqual(4800);
+  });
+
+  it("a fast boot marks 0 for every boot stage and 400 for desktop-enter", () => {
+    window.history.replaceState(null, "", "/?boot=fast");
+    render(<BootSequence />);
+    walkZero("desktop-enter");
+    walk(400);
+    expect(marks()).toEqual([
+      row("lid-opening", "fast", 0),
+      row("power-on", "fast", 0),
+      row("firmware", "fast", 0),
+      row("boot-log", "fast", 0),
+      row("desktop-enter", "fast", 400),
+      row("desktop", "fast", null),
+    ]);
+  });
+
+  it("marks only in an effect: a server render marks nothing", () => {
+    renderToString(<BootSequence />);
+    expect(
+      performance
+        .getEntriesByType("mark")
+        .filter((m) => m.name.startsWith("beselfos:boot:")),
+    ).toEqual([]);
+  });
+
+  it("a mark that throws does not stop the boot", () => {
+    const mark = vi.spyOn(performance, "mark").mockImplementation(() => {
+      throw new Error("no User Timing here");
+    });
+    try {
+      render(<BootSequence />);
+      toDesktop();
+      expect(mark).toHaveBeenCalled();
+      expect(stage()).toBe("desktop");
+    } finally {
+      mark.mockRestore();
+    }
   });
 });
