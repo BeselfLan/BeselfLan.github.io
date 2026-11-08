@@ -26,7 +26,8 @@ import { createRing } from "./ring";
 // outside a Screen. Reduced motion comes from `useReducedMotionConfig()`:
 // outside any `MotionConfig` it is false. The arrow keys, the wheel and the
 // drag are `ring.ts`'s, bound on the stage when the ring attaches, so the JSX
-// has no handler for them. The detail panel is #18's.
+// has no handler for them. The detail panel is `DetailPanel`, a sibling of this
+// component in `ProjectsApp`: never inside the stage.
 
 export interface CarouselProps {
   /**
@@ -41,8 +42,13 @@ export interface CarouselProps {
   onSelect(id: string): void;
   /** While true the loop stops and the ring sits at its target (D13). */
   paused: boolean;
-  /** Screen units the stage moves right, over 250 ms (at once under reduced motion). #18 sets it while its panel is open. */
+  /** Screen units the stage moves right, over 250 ms (at once under reduced motion). `ProjectsApp` sets it while the detail panel is open. */
   offsetX?: number;
+  /**
+   * The detail panel's id, given to every item. With it, each item carries
+   * `aria-expanded` and the selected one `aria-controls`.
+   */
+  panelId?: string;
 }
 
 export function Carousel(props: CarouselProps) {
@@ -63,6 +69,7 @@ function CarouselRing({
   onSelect,
   paused,
   offsetX,
+  panelId,
 }: CarouselProps) {
   const reduced = useReducedMotionConfig() ?? false;
   const [ring] = useState(() =>
@@ -116,6 +123,7 @@ function CarouselRing({
               front={i === front}
               tabIndex={i === front ? 0 : -1}
               selected={e.id === selectedId}
+              panelId={panelId}
               onClick={() => {
                 ring.show(i);
                 onSelect(e.id);

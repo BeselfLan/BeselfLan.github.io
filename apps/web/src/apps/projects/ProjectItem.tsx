@@ -6,6 +6,11 @@ export interface ProjectItemProps {
   entry: EntryIconSource;
   selected: boolean;
   onClick(): void;
+  /**
+   * The detail panel's id. With it, the button carries `aria-expanded` and,
+   * while selected, `aria-controls`. Without it, neither.
+   */
+  panelId?: string;
   /** The item at the front of the ring. #83 sets it. */
   front?: boolean;
   tabIndex?: number;
@@ -26,14 +31,16 @@ const CHOSEN = `${BASE} bg-white/10 outline-2 outline-os-accent hover:bg-white/1
 
 /**
  * One entry as a 150 x 150 button: its icon over its title, clamped to two
- * lines. Selection shows as an outline and `data-selected`. There is no ARIA
- * for it yet: `aria-expanded` and `aria-controls` come with #18's panel. The
- * title is not a heading, so the app keeps its one "Projects" heading.
+ * lines. Selection shows as an outline and `data-selected`. Given the panel's
+ * id, the button says what it opens: `aria-expanded` follows the selection, and
+ * `aria-controls` points at the panel while selected. The title is not a
+ * heading, so the app keeps its one "Projects" heading.
  */
 export function ProjectItem({
   entry,
   selected,
   onClick,
+  panelId,
   front,
   tabIndex,
   className,
@@ -47,6 +54,8 @@ export function ProjectItem({
       data-entry-id={entry.id}
       data-selected={selected ? "" : undefined}
       data-front={front ? "" : undefined}
+      aria-expanded={panelId === undefined ? undefined : selected}
+      aria-controls={panelId !== undefined && selected ? panelId : undefined}
       tabIndex={tabIndex}
       onClick={onClick}
       className={className ? `${base} ${className}` : base}
