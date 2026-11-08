@@ -25,9 +25,9 @@ export interface EventLookup {
 
 /**
  * "lock" when the login screen is on and the stage table lets a "lock" event
- * leave the current stage; otherwise Lock can only say it is unavailable. The
- * table has no such event on v2. When #14 adds `enteredBy: { lock: ["desktop"] }`
- * to its login entry, this starts sending with no change here.
+ * leave the current stage; otherwise Lock can only say it is unavailable.
+ * Which stage a lock enters, and from where, is the stage table's business
+ * (os/boot/stages.ts), so this file needs no change when the table changes.
  */
 export function lockOutcome(
   state: LockInputs,
@@ -47,7 +47,7 @@ export const power = {
   settings(): void {
     os.notifications.push({ ...SETTINGS_NOTICE });
   },
-  /** `machine` is a parameter so a test can pass a table that has a lock stage. */
+  /** `machine` is a parameter so a test can pass a table with or without a lock event. */
   lock(machine: EventLookup = bootMachine): void {
     if (lockOutcome(useOS.getState(), machine) === "lock") {
       os.boot.send("lock");
