@@ -267,6 +267,10 @@ function script(
 ) {
   return spawnSync("bash", [join(root, "scripts/media", name), ...args], {
     encoding: "utf8",
+    // spawnSync blocks the test runner, so vitest's own timeout cannot stop a
+    // script that never ends (a CRF search with no last step). This kills it,
+    // and the test then fails on its missing output.
+    timeout: 90_000,
     env: {
       ...process.env,
       PATH: `${dirname(process.execPath)}:${process.env.PATH}`,
