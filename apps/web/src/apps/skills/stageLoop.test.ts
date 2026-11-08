@@ -306,3 +306,151 @@ describe("createStageLoop", () => {
     expect(request).toHaveBeenCalledTimes(asked);
   });
 });
+
+describe("the wall (#90)", () => {
+  it("slides in", () => {
+    const { loop, frame } = setup();
+    loop.setBodies(["a"]);
+    loop.setWall(true, 1000);
+    // The wall waits for its first frame.
+    expect(loop.bounds().width).toBe(1000);
+    frame(1000);
+    expect(loop.bounds().width).toBe(1000);
+    // PANEL_MS is 250 and the ease is out-cubic: 87.5 percent of 340 by half.
+    frame(1125);
+    expect(loop.bounds().width).toBe(702.5);
+    frame(1250);
+    expect(loop.bounds().width).toBe(660);
+    frame(1400);
+    expect(loop.bounds().width).toBe(660);
+    expect(loop.bounds()).toEqual({ x: 0, y: 0, width: 660, height: 492 });
+  });
+
+  it("slides back", () => {
+    const { loop, frame } = setup();
+    loop.setBodies(["a"]);
+    loop.setWall(true, 0, { instant: true });
+    // No frame has run.
+    expect(loop.bounds().width).toBe(660);
+    loop.setWall(false, 2000);
+    frame(2000);
+    expect(loop.bounds().width).toBe(660);
+    frame(2125);
+    // Closing is 1 - p: 12.5 percent of the panel is still in at half time.
+    expect(loop.bounds().width).toBe(957.5);
+    frame(2250);
+    expect(loop.bounds().width).toBe(1000);
+  });
+
+  it("starts the slide at the time it is given, or at the clock's", () => {
+    const { loop, frame } = setup();
+    loop.setBodies(["a"]);
+    // clock.now() is 0 here.
+    loop.setWall(true);
+    frame(125);
+    expect(loop.bounds().width).toBe(702.5);
+  });
+
+  it("a reversal starts where the wall is", () => {
+    const { loop, frame } = setup();
+    loop.setBodies(["a"]);
+    loop.setWall(true, 1000);
+    frame(1000);
+    frame(1125);
+    expect(loop.bounds().width).toBe(702.5);
+    loop.setWall(false, 1125);
+    frame(1250);
+    // 0.875 of the panel was in; the ease takes 87.5 percent of it back.
+    expect(loop.bounds().width).toBeCloseTo(962.8125, 6);
+    expect(loop.bounds().width).not.toBe(660);
+    expect(loop.bounds().width).not.toBe(1000);
+  });
+
+  it("asking again does not restart", () => {
+    const { loop, frame } = setup();
+    loop.setBodies(["a"]);
+    loop.setWall(true, 1000);
+    frame(1000);
+    frame(1125);
+    loop.setWall(true, 1125);
+    frame(1250);
+    expect(loop.bounds().width).toBe(660);
+    // And once it is in, asking again does nothing.
+    loop.setWall(true, 2000);
+    frame(2100);
+    expect(loop.bounds().width).toBe(660);
+  });
+
+  it("a resize keeps the wall", () => {
+    const { loop } = setup();
+    loop.setBodies(["a"]);
+    loop.setWall(true, 0, { instant: true });
+    loop.setBounds({ ...BOUNDS, width: 1200 });
+    expect(loop.bounds().width).toBe(860);
+    loop.setWall(false, 0, { instant: true });
+    expect(loop.bounds().width).toBe(1200);
+  });
+
+  it("a resize during the slide keeps its progress", () => {
+    const { loop, frame } = setup();
+    loop.setBodies(["a"]);
+    loop.setWall(true, 1000);
+    frame(1000);
+    frame(1125);
+    loop.setBounds({ ...BOUNDS, width: 1200 });
+    expect(loop.bounds().width).toBe(1200 - 340 * 0.875);
+    frame(1250);
+    expect(loop.bounds().width).toBe(860);
+  });
+
+  it("a set spawned with the wall in stays left of it", () => {
+    const { loop } = setup();
+    loop.setWall(true, 0, { instant: true });
+    loop.setBodies(
+      Array.from({ length: 45 }, (_, i) => `s${i}`),
+      28,
+    );
+    for (const b of loop.bodies()) expect(b.x + b.r).toBeLessThanOrEqual(660);
+  });
+
+  it("nobody is stuck behind it", () => {
+    const { loop, frame } = setup();
+    loop.setBodies(
+      Array.from({ length: 45 }, (_, i) => `s${i}`),
+      28,
+    );
+    loop.setWall(true);
+    for (let t = 0; t <= 2000; t += 16) frame(t);
+    expect(loop.bounds().width).toBe(660);
+    expect(loop.bodies()).toHaveLength(45);
+    for (const b of loop.bodies()) {
+      expect(b.x + b.r).toBeLessThanOrEqual(660.5);
+    }
+  });
+
+  it("setBounds still refuses NaN with the wall in", () => {
+    const { loop } = setup();
+    loop.setWall(true, 0, { instant: true });
+    expect(() => loop.setBounds({ ...BOUNDS, width: NaN })).toThrow();
+    expect(loop.bounds().width).toBe(660);
+    // The stage is the old one, not the refused one.
+    loop.setWall(false, 0, { instant: true });
+    expect(loop.bounds().width).toBe(1000);
+  });
+
+  it("hands out a copy of the bounds", () => {
+    const { loop } = setup();
+    loop.bounds().width = 5;
+    expect(loop.bounds().width).toBe(1000);
+  });
+
+  it("lands a wall set while hidden on the first frame after it shows", () => {
+    const { loop, frame, setVisible } = setup({ visible: false });
+    loop.setBodies(["a"]);
+    loop.setWall(true, 0);
+    expect(loop.bounds().width).toBe(1000);
+    setVisible(true);
+    frame(5000);
+    expect(loop.bounds().width).toBe(660);
+  });
+});

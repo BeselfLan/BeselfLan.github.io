@@ -75,6 +75,10 @@ describe("wallRect", () => {
     expect(wallRect(stage, -1).width).toBe(1000);
   });
 
+  it("counts a NaN progress as 0, so the width is never NaN", () => {
+    expect(wallRect(stage, NaN).width).toBe(1000);
+  });
+
   it("never gives a negative width", () => {
     const narrow = { x: 0, y: 0, width: 300, height: 100 };
     expect(wallRect(narrow, 1).width).toBe(0);
