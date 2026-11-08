@@ -1,6 +1,13 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { MotionConfig } from "motion/react";
-import { Profiler, StrictMode, type ReactElement } from "react";
+import {
+  Profiler,
+  StrictMode,
+  useLayoutEffect,
+  useRef,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { staticContent } from "@/content/static";
 import { Carousel, type CarouselProps } from "./Carousel";
@@ -12,9 +19,20 @@ import { ringTheta, ringTransform } from "./carousel.math";
 // single commit, and a build that sets state per frame would pass the Profiler
 // case below. The fake requestAnimationFrame fires on 16 ms boundaries, so one
 // step runs one frame.
+//
+// jsdom has no pointer capture, so the three methods are stubbed on
+// HTMLElement.prototype for each test. A pointer event carries what a real
+// primary press does (`ev`), because a jsdom PointerEvent defaults `isPrimary`
+// to false.
 
 const ITEMS = staticContent.featuredEntries();
 const THETA = ringTheta(13);
+
+const CAPTURE = [
+  "setPointerCapture",
+  "releasePointerCapture",
+  "hasPointerCapture",
+] as const;
 
 beforeEach(() => {
   vi.useFakeTimers({
@@ -26,9 +44,20 @@ beforeEach(() => {
       "performance",
     ],
   });
+  for (const name of CAPTURE) {
+    Object.defineProperty(HTMLElement.prototype, name, {
+      configurable: true,
+      writable: true,
+      value: name === "hasPointerCapture" ? vi.fn(() => true) : vi.fn(),
+    });
+  }
 });
 afterEach(() => {
   vi.useRealTimers();
+  for (const name of CAPTURE) {
+    Reflect.deleteProperty(HTMLElement.prototype, name);
+  }
+  vi.restoreAllMocks();
 });
 
 /** `ms` of frames, one act() per 16 ms. */
@@ -78,6 +107,28 @@ const poses = (c: HTMLElement) => [
 const press = (name: string) =>
   fireEvent.click(screen.getByRole("button", { name }));
 
+/**
+ * A parent whose own layout effect reads the ring's pose. It runs after its
+ * children's layout effects and before any passive effect, so it sees a pose
+ * only when `attach` ran in a layout effect.
+ */
+function Probe({
+  onLayout,
+  children,
+}: {
+  onLayout(transform: string): void;
+  children: ReactNode;
+}) {
+  const box = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const ring = box.current?.querySelector<HTMLElement>(
+      "[data-carousel-ring]",
+    );
+    onLayout(ring?.style.transform ?? "no ring");
+  }, [onLayout]);
+  return <div ref={box}>{children}</div>;
+}
+
 describe("Carousel", () => {
   it("poses on mount", () => {
     const { container } = render(ui());
@@ -93,6 +144,15 @@ describe("Carousel", () => {
       expect(el.style.transform.startsWith("rotateY(")).toBe(true);
     }
     expect(ringEl(container).style.transform).toBe(
+      "translateZ(-376.072px) rotateY(0deg)",
+    );
+  });
+
+  it("paints the first pose before the first paint", () => {
+    const onLayout = vi.fn();
+    render(<Probe onLayout={onLayout}>{ui()}</Probe>);
+    expect(onLayout).toHaveBeenCalledTimes(1);
+    expect(onLayout).toHaveBeenCalledWith(
       "translateZ(-376.072px) rotateY(0deg)",
     );
   });
