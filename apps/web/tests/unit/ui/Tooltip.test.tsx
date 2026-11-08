@@ -68,8 +68,54 @@ describe("Tooltip showing", () => {
     expect(tip()).toBeNull();
 
     // Once the press is over, the next focus shows it again.
-    fireEvent.pointerUp(button());
     blur();
+    focus();
+    expect(tip()).not.toBeNull();
+  });
+
+  it("a click ends the press", () => {
+    render(ui());
+    fireEvent.pointerDown(button());
+    fireEvent.click(button());
+    focus();
+    expect(tip()).not.toBeNull();
+  });
+
+  // Chromium taps in this order: pointerdown, pointerup, pointerleave, then
+  // mousedown, focus and click. The pointer is up and gone before the focus.
+  const touch = { pointerType: "touch" };
+  const tap = (between: () => void = () => {}) => {
+    fireEvent.pointerDown(button(), touch);
+    fireEvent.pointerUp(button(), touch);
+    fireEvent.pointerLeave(button(), touch);
+    between();
+  };
+
+  it("a tap does not show it", () => {
+    render(ui());
+    tap(focus);
+    expect(tip()).toBeNull();
+    fireEvent.click(button());
+    expect(tip()).toBeNull();
+
+    // After the tap, the next focus shows it again.
+    blur();
+    focus();
+    expect(tip()).not.toBeNull();
+  });
+
+  it("a cancelled touch does not hold the press", () => {
+    render(ui());
+    tap();
+    fireEvent.pointerCancel(button(), touch);
+    focus();
+    expect(tip()).not.toBeNull();
+  });
+
+  it("a mouse that leaves mid-press does not hold the press", () => {
+    render(ui());
+    fireEvent.pointerDown(button());
+    fireEvent.pointerLeave(button());
     focus();
     expect(tip()).not.toBeNull();
   });

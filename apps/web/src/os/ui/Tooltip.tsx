@@ -59,8 +59,11 @@ export function Tooltip({
   const id = useId();
   const wrapRef = useRef<HTMLSpanElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  // A mouse press focuses a button. Without this the tooltip would come up
-  // after every click. (:focus-visible is no help: jsdom's depends on history.)
+  // A press focuses a button, and without this the tooltip would come up after
+  // every click. A mouse focuses during the press, but a tap focuses after
+  // pointerup and pointerleave, so the flag lasts until the click (or a
+  // cancel), and only a leave by a mouse clears it. (:focus-visible is no
+  // help: jsdom's depends on history.)
   const pressing = useRef(false);
   const [anchor, setAnchor] = useState<AnchorRect | null>(null);
 
@@ -91,15 +94,18 @@ export function Tooltip({
         clearTimeout(timer.current);
         timer.current = setTimeout(show, delay);
       }}
-      onPointerLeave={() => {
-        pressing.current = false;
+      onPointerLeave={(e) => {
+        if (e.pointerType !== "touch") pressing.current = false;
         hide();
       }}
       onPointerDown={() => {
         pressing.current = true;
         hide();
       }}
-      onPointerUp={() => {
+      onPointerCancel={() => {
+        pressing.current = false;
+      }}
+      onClick={() => {
         pressing.current = false;
       }}
       onFocus={() => {
