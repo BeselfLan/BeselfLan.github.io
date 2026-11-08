@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { AppProps } from "@/os/apps/types";
 import { Chip } from "@/os/ui/Chip";
+import { Carousel } from "./Carousel";
 import {
   FILTERS,
   countLabel,
@@ -12,15 +13,30 @@ import {
   type ProjectsView,
 } from "./filters";
 import type { ProjectsArgs } from "./index";
-import { ProjectItem } from "./ProjectItem";
 
 // The Projects window (plan 5.2, D22): the filter chips with Featured first,
-// the "n items" count, the selection, and the entries. The entries are a plain
-// wrapped grid for now; #83 replaces `[data-projects-grid]` with the ring, and
-// #18 adds the detail panel beside it. This file does not use `useScreen()`,
-// so `registry.test.ts` can render it outside a Screen, and it reaches the OS
-// through `api` only. It never writes its own args, its title or the URL: the
-// URL keeps what the window was opened with.
+// the "n items" count, the selection, and the entries on the 3D ring (#94, D8).
+// #18 adds the detail panel beside it and sets the carousel's `offsetX`. This
+// file does not use `useScreen()`, so `registry.test.ts` can render it outside
+// a Screen, and it reaches the OS through `api` only. It never writes its own
+// args, its title or the URL: the URL keeps what the window was opened with.
+
+// A number for each args object, given the first time the object is seen. The
+// ring is keyed by it, so a new open (a new args object, which `own.args ===
+// args` below also treats as new) rebuilds the ring. Idempotent per object: the
+// same args always give the same number, so a render that runs twice (Strict
+// Mode) agrees. It is a plain function outside the component, so its counter
+// is not a component variable written in render.
+const openIds = new WeakMap<object, number>();
+let lastOpenId = 0;
+function openId(args: object): number {
+  let id = openIds.get(args);
+  if (id === undefined) {
+    id = ++lastOpenId;
+    openIds.set(args, id);
+  }
+  return id;
+}
 
 export default function ProjectsApp({ args, api }: AppProps<ProjectsArgs>) {
   // The view the window's args ask for. A re-open with other args is a new
@@ -37,6 +53,10 @@ export default function ProjectsApp({ args, api }: AppProps<ProjectsArgs>) {
     view: ProjectsView;
   } | null>(null);
   const view = own !== null && own.args === args ? own.view : fromArgs;
+
+  // The ring stops its frames while the window is hidden (D13).
+  const [visible, setVisible] = useState(() => api.isVisible());
+  useEffect(() => api.subscribeVisible(setVisible), [api]);
 
   // Read-only: the provider shares these arrays with every app.
   const entries = useMemo(
@@ -87,27 +107,20 @@ export default function ProjectsApp({ args, api }: AppProps<ProjectsArgs>) {
         </span>
       </div>
 
-      {/* #83 puts the carousel here and #18 the detail panel. */}
+      {/* The ring draws "Nothing here yet." itself. A filter change or new
+          args rebuild it with no animation, because its size and its angle
+          change with the item count; the selected entry stays in front when
+          it is in the new list. #18 puts the detail panel beside it. */}
       <div className="relative min-h-0 flex-1">
-        {entries.length === 0 ? (
-          <p className="flex h-full items-center justify-center text-sm opacity-70">
-            Nothing here yet.
-          </p>
-        ) : (
-          // A plain grid until #83 puts the entries on the ring.
-          <div data-projects-grid="" className="h-full overflow-y-auto p-4">
-            <div className="flex flex-wrap content-start justify-center gap-4">
-              {entries.map((e) => (
-                <ProjectItem
-                  key={e.id}
-                  entry={e}
-                  selected={e.id === view.selectedId}
-                  onClick={() => select(e.id)}
-                />
-              ))}
-            </div>
-          </div>
-        )}
+        <Carousel
+          key={`${view.filter}:${openId(args)}`}
+          items={entries}
+          initialFrontId={view.selectedId}
+          selectedId={view.selectedId}
+          onSelect={select}
+          paused={!visible}
+          offsetX={0}
+        />
       </div>
     </div>
   );
