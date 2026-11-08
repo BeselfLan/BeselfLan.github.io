@@ -178,19 +178,23 @@ describe("events", () => {
 });
 
 describe("one entry adds a stage", () => {
+  // stageForEvent enters the first entry, in table order, that lists the
+  // event from the current stage, so the added entry uses an event the real
+  // table does not have.
   const machine = createStageMachine({
     ...BOOT_STAGES,
-    locked: {
+    screensaver: {
       duration: { full: null, fast: null, skip: null },
       onEnter: () => {},
       next: "desktop",
-      enteredBy: { lock: ["desktop"] },
+      enteredBy: { idle: ["desktop"] },
     },
   });
 
   it("is reachable and walkable without touching other entries", () => {
-    expect(machine.stageForEvent("lock", "desktop")).toBe("locked");
-    expect(machine.nextStage("locked", ctx("full"))).toBe("desktop");
-    expect("locked" in BOOT_STAGES).toBe(false);
+    expect(bootMachine.stageForEvent("idle", "desktop")).toBeNull();
+    expect(machine.stageForEvent("idle", "desktop")).toBe("screensaver");
+    expect(machine.nextStage("screensaver", ctx("full"))).toBe("desktop");
+    expect("screensaver" in BOOT_STAGES).toBe(false);
   });
 });
