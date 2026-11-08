@@ -1,8 +1,12 @@
+import { isPrimaryPress } from "@/os/input/pointer";
 import {
   CAROUSEL,
   REST,
+  dragToRotation,
   frontIndex,
   itemPose,
+  release,
+  releaseOmega,
   ringTransform,
   rotationForIndex,
   snapRotation,
@@ -11,6 +15,7 @@ import {
   stepTarget,
   wheelToRotation,
   type Motion,
+  type Sample,
 } from "./carousel.math";
 
 // The controller of the Projects ring (plan 5.3, D8, D13). It holds everything
@@ -67,6 +72,22 @@ export interface Ring {
 const moving = (m: Motion): boolean =>
   m.mode === "spring" || m.mode === "inertia";
 
+/** A pointer that is down on the stage. */
+interface Press {
+  id: number;
+  /** Where it went down, in client px. */
+  x: number;
+  y: number;
+  /** The ring's rotation at the press. */
+  start: number;
+  /** Client px per screen unit, read from the DOM at the press. */
+  scale: number;
+  /** True once it has travelled `CAROUSEL.dragThreshold` screen units. */
+  dragging: boolean;
+  /** The last `releaseWindowMs` of the drag, for the speed at release. */
+  samples: Sample[];
+}
+
 /** A ring of `n` items with item `initialIndex` at the front, at rest. */
 export function createRing(n: number, initialIndex: number): Ring {
   const start = rotationForIndex(initialIndex, 0, n);
@@ -75,6 +96,10 @@ export function createRing(n: number, initialIndex: number): Ring {
   const listeners = new Set<() => void>();
   const items: (HTMLElement | null)[] = [];
   let ringEl: HTMLElement | null = null;
+  let stageEl: HTMLElement | null = null;
+  let press: Press | null = null;
+  // True from the end of a drag until the click that follows it is swallowed.
+  let swallow = false;
   let wheelTimer: ReturnType<typeof setTimeout> | null = null;
   let frame: number | null = null;
   let last: number | null = null;
@@ -143,12 +168,18 @@ export function createRing(n: number, initialIndex: number): Ring {
   }
 
   /**
-   * Ends the wheel run. A turn that is still held (mode `drag`) becomes a
-   * spring to the nearest item at speed 0, so pause jumps it to that item and
-   * a detach leaves a re-attach to finish it.
+   * Ends the wheel run and any press, for a pause and for a detach. A turn
+   * that is still held (mode `drag`) becomes a spring to the nearest item at
+   * speed 0, so pause jumps it to that item and a detach leaves a re-attach to
+   * finish it.
    */
   function stopInput() {
     clearWheel();
+    if (press) {
+      const id = press.id;
+      press = null;
+      if (stageEl?.hasPointerCapture(id)) stageEl.releasePointerCapture(id);
+    }
     if (m.mode === "drag") {
       m = {
         rot: m.rot,
@@ -168,7 +199,7 @@ export function createRing(n: number, initialIndex: number): Ring {
     // Stop a wheel over the ring from scrolling a parent or from starting a
     // swipe navigation, even when it does not turn the ring.
     e.preventDefault();
-    if (paused) return;
+    if (paused || press) return;
     m = { ...m, rot: m.rot + wheelToRotation(e), omega: 0, mode: "drag" };
     request();
     clearWheel();
@@ -183,6 +214,8 @@ export function createRing(n: number, initialIndex: number): Ring {
   // the ring. Focus follows the key to the item it sends the ring to, which is
   // known at once, so it does not walk through every item a spring passes.
   function onKeyDown(e: KeyboardEvent) {
+    // Enter on the front item after a drag clicks with no pointerdown before it.
+    swallow = false;
     // Alt+Arrow is the browser's back and forward. Shift is not checked.
     if (e.altKey || e.ctrlKey || e.metaKey || e.isComposing) return;
     if (n < 2) return;
@@ -211,9 +244,128 @@ export function createRing(n: number, initialIndex: number): Ring {
     e.preventDefault();
   }
 
+  // A drag follows the pointer from where it went down: the rotation is the
+  // start plus the distance from the press, divided by the screen's scale, and
+  // never a sum of per-move steps. Chromium coalesces moves, so nothing here
+  // counts them. It starts after `dragThreshold` screen units, and only then
+  // does the stage take pointer capture: capturing at the press would send
+  // every item click to the stage in Chromium.
+  function onPointerDown(e: PointerEvent) {
+    swallow = false;
+    if (!stageEl || !isPrimaryPress(e) || paused || press) return;
+    clearWheel();
+    // The scale is the DOM's, not `useScreen()`'s, so the ring also works
+    // outside a Screen. The stage's own translateX does not change its width.
+    const width = stageEl.offsetWidth;
+    const measured =
+      width > 0 ? stageEl.getBoundingClientRect().width / width : 1;
+    const scale = Number.isFinite(measured) && measured > 0 ? measured : 1;
+    // A press stops a turning ring, the way a hand stops a wheel.
+    cancel();
+    m = { rot: m.rot, omega: 0, mode: "drag", target: m.rot };
+    press = {
+      id: e.pointerId,
+      x: e.clientX,
+      y: e.clientY,
+      start: m.rot,
+      scale,
+      dragging: false,
+      samples: [{ t: performance.now(), rot: m.rot }],
+    };
+  }
+
+  function sample(p: Press) {
+    const t = performance.now();
+    p.samples.push({ t, rot: m.rot });
+    // Older samples are outside the release window already.
+    while (p.samples[0].t < t - CAROUSEL.releaseWindowMs) p.samples.shift();
+  }
+
+  function onPointerMove(e: PointerEvent) {
+    const p = press;
+    if (!p || e.pointerId !== p.id || !stageEl) return;
+    const dx = e.clientX - p.x;
+    if (!p.dragging) {
+      const travel = Math.hypot(dx, e.clientY - p.y) / p.scale;
+      if (travel < CAROUSEL.dragThreshold) return;
+      p.dragging = true;
+      // Only from a live move of the press's own pointer: for any other id
+      // setPointerCapture throws.
+      stageEl.setPointerCapture(p.id);
+    }
+    m = { ...m, mode: "drag", rot: p.start + dragToRotation(dx, p.scale) };
+    sample(p);
+    request();
+  }
+
+  /** Lets go of the ring at `omega` deg/s and ends the press. */
+  function letGo(omega: number) {
+    press = null;
+    const snap = snapRotation(m.rot, n);
+    if (omega === 0 && Math.abs(m.rot - snap) < CAROUSEL.settleDeg) {
+      // A press that never became a drag, on an item: nothing to animate.
+      cancel();
+      m = { rot: snap, omega: 0, mode: "idle", target: snap };
+      paint();
+      return;
+    }
+    m = release(m, omega, n, reduced || paused);
+    if (m.mode === "idle") {
+      cancel();
+      paint();
+    } else {
+      request();
+    }
+  }
+
+  function onPointerUp(e: PointerEvent) {
+    const p = press;
+    if (!p || e.pointerId !== p.id) return;
+    let omega = 0;
+    if (p.dragging) {
+      // The sample at the release matters: a flick can bring a single move.
+      m = { ...m, rot: p.start + dragToRotation(e.clientX - p.x, p.scale) };
+      sample(p);
+      omega = releaseOmega(p.samples, performance.now());
+      swallow = true;
+    }
+    letGo(omega);
+  }
+
+  // A cancelled press, a lost capture and a pointer that leaves before the
+  // threshold let go at rest and swallow no click. Before capture a pointerup
+  // outside the stage never reaches it, and a stuck press would freeze the ring.
+  function onPointerCancel(e: PointerEvent) {
+    if (press && e.pointerId === press.id) letGo(0);
+  }
+
+  function onLostPointerCapture(e: PointerEvent) {
+    // On touch the item holds implicit capture, and its lostpointercapture
+    // bubbles up when the stage takes over at the threshold.
+    if (e.target === stageEl) onPointerCancel(e);
+  }
+
+  function onPointerLeave(e: PointerEvent) {
+    if (press && !press.dragging) onPointerCancel(e);
+  }
+
+  // The click that ends a drag must not select the item under the pointer.
+  function onClickCapture(e: MouseEvent) {
+    if (!swallow) return;
+    swallow = false;
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
+  // The icon image would start a native drag, which cancels the pointer stream.
+  function onDragStart(e: DragEvent) {
+    e.preventDefault();
+  }
+
   return {
     attach(el, stage) {
       ringEl = el;
+      stageEl = stage;
       const off: (() => void)[] = [];
       const on = <K extends keyof HTMLElementEventMap>(
         type: K,
@@ -225,6 +377,14 @@ export function createRing(n: number, initialIndex: number): Ring {
       };
       on("wheel", onWheel, { passive: false });
       on("keydown", onKeyDown);
+      on("pointerdown", onPointerDown);
+      on("pointermove", onPointerMove);
+      on("pointerup", onPointerUp);
+      on("pointercancel", onPointerCancel);
+      on("lostpointercapture", onLostPointerCapture);
+      on("pointerleave", onPointerLeave);
+      on("click", onClickCapture, { capture: true });
+      on("dragstart", onDragStart);
       paint();
       if (moving(m) && !paused) request();
       return () => {
@@ -232,6 +392,7 @@ export function createRing(n: number, initialIndex: number): Ring {
         stopInput();
         cancel();
         ringEl = null;
+        stageEl = null;
       };
     },
     setItem(index, el) {

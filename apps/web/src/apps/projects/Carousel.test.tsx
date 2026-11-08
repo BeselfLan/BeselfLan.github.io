@@ -1,4 +1,10 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { MotionConfig } from "motion/react";
 import {
   Profiler,
@@ -53,6 +59,9 @@ beforeEach(() => {
   }
 });
 afterEach(() => {
+  // Unmount first: a press left down is let go of on unmount, which calls the
+  // capture methods, and this hook runs before Testing Library's own cleanup.
+  cleanup();
   vi.useRealTimers();
   for (const name of CAPTURE) {
     Reflect.deleteProperty(HTMLElement.prototype, name);
@@ -109,6 +118,46 @@ const press = (name: string) =>
 /** A wheel over the stage. Returns false when the event was prevented. */
 const wheel = (c: HTMLElement, deltaY: number, init: WheelEventInit = {}) =>
   fireEvent.wheel(stageEl(c), { deltaY, ...init });
+
+/** The init of a primary-button pointer event at (500, 300). */
+const ev = (over: PointerEventInit = {}): PointerEventInit => ({
+  pointerId: 1,
+  button: 0,
+  isPrimary: true,
+  clientX: 500,
+  clientY: 300,
+  ...over,
+});
+/** A pointer sequence on `el`: events bubble up to the stage. */
+const down = (el: Element, over?: PointerEventInit) =>
+  fireEvent.pointerDown(el, ev(over));
+const moveTo = (el: Element, clientX: number, over?: PointerEventInit) =>
+  fireEvent.pointerMove(el, ev({ clientX, ...over }));
+const up = (el: Element, over?: PointerEventInit) =>
+  fireEvent.pointerUp(el, ev(over));
+/**
+ * Makes the stage look scaled: `rectWidth` px on screen for `layoutWidth`
+ * units of layout. jsdom measures nothing, so both reads are stubbed.
+ */
+const scaleStage = (c: HTMLElement, rectWidth: number, layoutWidth: number) => {
+  const stage = stageEl(c);
+  vi.spyOn(stage, "getBoundingClientRect").mockReturnValue(
+    new DOMRect(0, 0, rectWidth, 300),
+  );
+  Object.defineProperty(stage, "offsetWidth", {
+    configurable: true,
+    value: layoutWidth,
+  });
+};
+/** The number in the ring's `rotateY(<n>deg)`. */
+const rotation = (c: HTMLElement) =>
+  Number(/rotateY\((-?[\d.]+)deg\)/.exec(ringEl(c).style.transform)![1]);
+/** True when `rot` sits on a whole item. */
+const whole = (rot: number) =>
+  Math.abs(rot / THETA - Math.round(rot / THETA)) < 0.001;
+const setCapture = () => vi.mocked(HTMLElement.prototype.setPointerCapture);
+const releaseCapture = () =>
+  vi.mocked(HTMLElement.prototype.releasePointerCapture);
 
 /**
  * A parent whose own layout effect reads the ring's pose. It runs after its
@@ -323,6 +372,21 @@ describe("Carousel", () => {
       expect(vi.getTimerCount()).toBe(0);
     });
 
+    it("lands a released drag at once, with no inertia", () => {
+      const { container } = render(reduced(ui()));
+      const bash = item(container, "bash-shell");
+      down(bash);
+      moveTo(bash, 400);
+      // The drag itself still follows the pointer: that is direct handling.
+      frames(16);
+      expect(ringEl(container).style.transform).toBe(ringTransform(-30, 13));
+      frames(16);
+      up(bash, { clientX: 400 });
+      expect(ringEl(container).style.transform).toBe(ringTransform(-THETA, 13));
+      expect(index(container)).toBe("2 / 13");
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
     it("lands a wheel at once when it goes quiet", () => {
       const { container } = render(reduced(ui()));
       wheel(container, 100);
@@ -452,6 +516,282 @@ describe("Carousel", () => {
     });
   });
 
+  describe("the drag", () => {
+    it("divides every pointer delta by the scale", () => {
+      const { container } = render(ui());
+      scaleStage(container, 750, 1500); // The screen is at half size.
+      const bash = item(container, "bash-shell");
+      down(bash);
+      moveTo(bash, 400);
+      frames(16);
+      // 100 px is 200 units, 0.3 degrees each, and the item follows the
+      // pointer to the left. No division would give -30, and C.1's sign +60.
+      expect(ringEl(container).style.transform).toBe(ringTransform(-60, 13));
+      frames(100);
+      up(bash, { clientX: 400 });
+      frames(1000);
+      expect(ringEl(container).style.transform).toBe(
+        ringTransform(-2 * THETA, 13),
+      );
+      expect(index(container)).toBe("3 / 13");
+    });
+
+    it("turns 0.3 degrees per unit at scale 1", () => {
+      const { container } = render(ui());
+      scaleStage(container, 1500, 1500);
+      const bash = item(container, "bash-shell");
+      down(bash);
+      moveTo(bash, 400);
+      frames(16);
+      expect(ringEl(container).style.transform).toBe(ringTransform(-30, 13));
+      frames(100);
+      up(bash, { clientX: 400 });
+      frames(1000);
+      expect(ringEl(container).style.transform).toBe(ringTransform(-THETA, 13));
+    });
+
+    it("measures from the press point, not move by move", () => {
+      const { container } = render(ui());
+      const bash = item(container, "bash-shell");
+      down(bash);
+      moveTo(bash, 450);
+      moveTo(bash, 400);
+      frames(16);
+      // Summing each move's distance from the press would give -45.
+      expect(ringEl(container).style.transform).toBe(ringTransform(-30, 13));
+    });
+
+    it("follows the pointer back past the press point", () => {
+      const { container } = render(ui());
+      const bash = item(container, "bash-shell");
+      down(bash);
+      moveTo(bash, 400);
+      moveTo(bash, 600);
+      frames(16);
+      expect(ringEl(container).style.transform).toBe(ringTransform(30, 13));
+    });
+
+    it("leaves the ring alone for a press that is not a primary press", () => {
+      for (const over of [{ button: 2 }, { isPrimary: false }]) {
+        const { container, unmount } = render(ui());
+        const bash = item(container, "bash-shell");
+        down(bash, over);
+        moveTo(bash, 400);
+        frames(16);
+        expect(ringEl(container).style.transform).toBe(ringTransform(0, 13));
+        expect(setCapture()).not.toHaveBeenCalled();
+        unmount();
+      }
+    });
+
+    it("ignores the moves of another pointer", () => {
+      const { container } = render(ui());
+      const bash = item(container, "bash-shell");
+      down(bash);
+      moveTo(bash, 400, { pointerId: 2 });
+      frames(16);
+      expect(ringEl(container).style.transform).toBe(ringTransform(0, 13));
+    });
+
+    it("waits for the threshold before it takes capture", () => {
+      const { container } = render(ui());
+      const bash = item(container, "bash-shell");
+      down(bash);
+      expect(setCapture()).not.toHaveBeenCalled();
+      moveTo(bash, 497); // 3 units
+      expect(setCapture()).not.toHaveBeenCalled();
+      frames(16);
+      expect(ringEl(container).style.transform).toBe(ringTransform(0, 13));
+      moveTo(bash, 495); // 5 units
+      expect(setCapture()).toHaveBeenCalledTimes(1);
+      expect(setCapture()).toHaveBeenCalledWith(1);
+      expect(setCapture().mock.contexts[0]).toBe(stageEl(container));
+      moveTo(bash, 480);
+      expect(setCapture()).toHaveBeenCalledTimes(1);
+    });
+
+    it("measures the threshold in screen units", () => {
+      const { container } = render(ui());
+      scaleStage(container, 750, 1500);
+      const bash = item(container, "bash-shell");
+      down(bash);
+      // 3 px is 6 units at half size.
+      moveTo(bash, 497);
+      expect(setCapture()).toHaveBeenCalledTimes(1);
+    });
+
+    it("coasts on after a flick and lands on an item", () => {
+      const { container } = render(ui());
+      const bash = item(container, "bash-shell");
+      down(bash);
+      moveTo(bash, 400);
+      frames(16);
+      up(bash, { clientX: 400 });
+      frames(2000);
+      // At rest the same drag ends at -θ. A flick at 1080 degrees per second
+      // carries on for several items.
+      expect(rotation(container)).toBeLessThanOrEqual(-5 * THETA);
+      expect(whole(rotation(container))).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("coasts the other way for a flick to the right", () => {
+      const { container } = render(ui());
+      const bash = item(container, "bash-shell");
+      down(bash);
+      moveTo(bash, 600);
+      frames(16);
+      up(bash, { clientX: 600 });
+      frames(2000);
+      expect(rotation(container)).toBeGreaterThanOrEqual(5 * THETA);
+      expect(whole(rotation(container))).toBe(true);
+    });
+
+    it("stops a turning ring when it is pressed", () => {
+      const { container } = render(ui());
+      press("Next item");
+      frames(48);
+      const stage = stageEl(container);
+      down(stage);
+      const frozen = ringEl(container).style.transform;
+      expect(rotation(container)).toBeLessThan(-0.5);
+      expect(rotation(container)).toBeGreaterThan(-THETA / 2);
+      frames(200);
+      expect(ringEl(container).style.transform).toBe(frozen);
+      expect(vi.getTimerCount()).toBe(0);
+      // Let go without a move: the nearest item is the first one, and the
+      // ring springs back to it. Without the freeze it reaches -θ.
+      up(stage);
+      frames(1000);
+      expect(ringEl(container).style.transform).toBe(ringTransform(0, 13));
+      expect(index(container)).toBe("1 / 13");
+    });
+
+    it("lets go at rest when the press is cancelled", () => {
+      const onSelect = vi.fn();
+      const { container } = render(ui({}, onSelect));
+      const bash = item(container, "bash-shell");
+      down(bash);
+      moveTo(bash, 400);
+      fireEvent.pointerCancel(bash, ev());
+      frames(1000);
+      expect(ringEl(container).style.transform).toBe(ringTransform(-THETA, 13));
+      moveTo(bash, 300);
+      frames(16);
+      expect(ringEl(container).style.transform).toBe(ringTransform(-THETA, 13));
+      // A cancelled press swallows no click.
+      fireEvent.click(item(container, "tetris-asm"));
+      expect(onSelect).toHaveBeenCalledWith("tetris-asm");
+    });
+
+    it("lets go only when the stage itself loses capture", () => {
+      const { container } = render(ui());
+      const bash = item(container, "bash-shell");
+      down(bash);
+      moveTo(bash, 400);
+      // On touch the item held implicit capture, and its event bubbles up when
+      // the stage takes over.
+      fireEvent.lostPointerCapture(bash, ev());
+      moveTo(bash, 300);
+      frames(16);
+      expect(ringEl(container).style.transform).toBe(ringTransform(-60, 13));
+      fireEvent.lostPointerCapture(stageEl(container), ev());
+      frames(1000);
+      expect(ringEl(container).style.transform).toBe(
+        ringTransform(-2 * THETA, 13),
+      );
+    });
+
+    it("lets go at rest when the pointer leaves before the threshold", () => {
+      const { container } = render(ui());
+      const bash = item(container, "bash-shell");
+      down(bash);
+      fireEvent.pointerLeave(stageEl(container), ev());
+      moveTo(bash, 400);
+      frames(16);
+      expect(ringEl(container).style.transform).toBe(ringTransform(0, 13));
+      expect(setCapture()).not.toHaveBeenCalled();
+    });
+
+    it("keeps dragging when the pointer leaves after the threshold", () => {
+      const { container } = render(ui());
+      const bash = item(container, "bash-shell");
+      down(bash);
+      moveTo(bash, 400);
+      fireEvent.pointerLeave(stageEl(container), ev());
+      moveTo(bash, 300);
+      frames(16);
+      expect(ringEl(container).style.transform).toBe(ringTransform(-60, 13));
+    });
+
+    it("prevents a native drag of the icon", () => {
+      const { container } = render(ui());
+      const img = item(container, "bash-shell").querySelector("img")!;
+      expect(fireEvent.dragStart(img)).toBe(false);
+    });
+
+    it("never selects an item, and swallows only the click after a drag", () => {
+      const onSelect = vi.fn();
+      const { container } = render(ui({}, onSelect));
+      const bash = item(container, "bash-shell");
+      const drag = () => {
+        down(bash);
+        moveTo(bash, 400);
+        up(bash, { clientX: 400 });
+      };
+
+      // The swallow runs in the capture phase, before the item's own listeners.
+      const direct = vi.fn();
+      bash.addEventListener("click", direct);
+      drag();
+      fireEvent.click(bash);
+      expect(onSelect).not.toHaveBeenCalled();
+      expect(direct).not.toHaveBeenCalled();
+      // The flag went with that click.
+      fireEvent.click(bash);
+      expect(onSelect).toHaveBeenCalledTimes(1);
+
+      // Enter on the front item clicks with no pointerdown before it, so a key
+      // clears the flag.
+      drag();
+      fireEvent.keyDown(bash, { key: "Shift" });
+      fireEvent.click(bash);
+      expect(onSelect).toHaveBeenCalledTimes(2);
+
+      // So does the next press.
+      drag();
+      down(bash);
+      up(bash);
+      fireEvent.click(bash);
+      expect(onSelect).toHaveBeenCalledTimes(3);
+    });
+
+    it("counts a press that barely moves as a click", () => {
+      const onSelect = vi.fn();
+      const { container } = render(ui({}, onSelect));
+      const todo = item(container, "todo-fullstack");
+      down(todo);
+      moveTo(todo, 498); // 2 units
+      up(todo, { clientX: 498 });
+      // An idle ring on an item schedules nothing.
+      expect(vi.getTimerCount()).toBe(0);
+      fireEvent.click(todo);
+      expect(onSelect).toHaveBeenCalledTimes(1);
+      expect(onSelect).toHaveBeenCalledWith("todo-fullstack");
+    });
+
+    it("ignores a press while the window is hidden", () => {
+      const { container } = render(ui({ paused: true }));
+      const bash = item(container, "bash-shell");
+      down(bash);
+      moveTo(bash, 400);
+      frames(16);
+      expect(ringEl(container).style.transform).toBe(ringTransform(0, 13));
+      expect(setCapture()).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    });
+  });
+
   describe("the wheel", () => {
     it("turns the ring directly and snaps 120 ms after the last event", () => {
       const { container } = render(ui());
@@ -476,6 +816,16 @@ describe("Carousel", () => {
       fireEvent.wheel(stageEl(container), { deltaX: 200, deltaY: 10 });
       frames(16);
       expect(ringEl(container).style.transform).toBe(ringTransform(-30, 13));
+    });
+
+    it("is prevented and ignored during a press", () => {
+      const { container } = render(ui());
+      down(item(container, "bash-shell"));
+      expect(wheel(container, 100)).toBe(false);
+      frames(16);
+      expect(ringEl(container).style.transform).toBe(ringTransform(0, 13));
+      frames(500);
+      expect(vi.getTimerCount()).toBe(0);
     });
 
     it("leaves ctrl+wheel to the page", () => {
@@ -603,6 +953,35 @@ describe("Carousel", () => {
       expect(index(container)).toBe("2 / 13");
     });
 
+    it("ends a drag and lets go of the pointer", () => {
+      const { container, rerender } = render(ui());
+      const bash = item(container, "bash-shell");
+      down(bash);
+      moveTo(bash, 400);
+      expect(vi.getTimerCount()).toBe(1); // The frame that will paint it.
+      rerender(ui({ paused: true }));
+      expect(vi.getTimerCount()).toBe(0);
+      expect(ringEl(container).style.transform).toBe(ringTransform(-THETA, 13));
+      expect(releaseCapture()).toHaveBeenCalledTimes(1);
+      expect(releaseCapture()).toHaveBeenCalledWith(1);
+      // The press is over: a later move and a frame change nothing.
+      moveTo(bash, 300);
+      frames(16);
+      expect(ringEl(container).style.transform).toBe(ringTransform(-THETA, 13));
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("takes a ring that a press stopped to the nearest item", () => {
+      const { container, rerender } = render(ui());
+      press("Next item");
+      frames(48);
+      // The spring is heading for -θ, but the hand has stopped it near 0.
+      down(stageEl(container));
+      rerender(ui({ paused: true }));
+      expect(ringEl(container).style.transform).toBe(ringTransform(0, 13));
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
     it("prevents a wheel and does nothing with it", () => {
       const { container } = render(ui({ paused: true }));
       expect(wheel(container, 100)).toBe(false);
@@ -619,6 +998,17 @@ describe("Carousel", () => {
     expect(vi.getTimerCount()).toBe(1);
     unmount();
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("lets go of a drag when it unmounts", () => {
+    const { container, unmount } = render(ui());
+    const bash = item(container, "bash-shell");
+    down(bash);
+    moveTo(bash, 400);
+    expect(vi.getTimerCount()).toBe(1);
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(releaseCapture()).toHaveBeenCalledWith(1);
   });
 
   it("clears the wheel timer and unbinds the stage when it unmounts", () => {
