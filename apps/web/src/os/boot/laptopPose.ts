@@ -12,17 +12,19 @@ import { bootMachine, type BootStage, type StageContext } from "./stages";
 /** `closed` before the boot, `opening` for the lid-opening stage, `open` after. */
 export type LidState = "closed" | "opening" | "open";
 
-export interface CameraPose {
+// Type aliases, not interfaces: motion's `animate` wants a type with an
+// implicit index signature, which an interface does not have.
+export type CameraPose = {
   /** Degrees; negative looks down on the deck. */
   rotateX: number;
   scale: number;
   /** Pixels. */
   y: number;
-}
-export interface LidPose {
+};
+export type LidPose = {
   /** Degrees about the hinge; 0 is open and -90 lies flat over the deck. */
   rotateX: number;
-}
+};
 export interface LaptopPose {
   state: LidState;
   camera: CameraPose;
