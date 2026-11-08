@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { staticContent } from "@/content/static";
 import type { AppApi } from "@/os/apps/types";
 import { WindowIdContext } from "@/os/window/useWindowVisible";
@@ -8,7 +8,32 @@ import ProjectsApp from "./ProjectsApp";
 
 // The component with an api of vi.fn()s and the real content. It renders
 // outside a Screen, as registry.test.ts does, and imports nothing from
-// os/store: the lint rule keeps apps away from it.
+// os/store: the lint rule keeps apps away from it. The clock is fake (the
+// ring's frames are requestAnimationFrame), so no real frame runs after a
+// click, and `frames` steps it one act() per frame (see Carousel.test.tsx).
+
+beforeEach(() => {
+  vi.useFakeTimers({
+    toFake: [
+      "setTimeout",
+      "clearTimeout",
+      "requestAnimationFrame",
+      "cancelAnimationFrame",
+      "performance",
+    ],
+  });
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+const frames = (ms: number) => {
+  for (let t = 0; t < ms; t += 16) {
+    act(() => {
+      vi.advanceTimersByTime(16);
+    });
+  }
+};
 
 function makeApi(content: AppApi["content"] = staticContent) {
   const mocks = {
@@ -19,7 +44,7 @@ function makeApi(content: AppApi["content"] = staticContent) {
     openApp: vi.fn(),
     notify: vi.fn(),
     isVisible: vi.fn(() => true),
-    subscribeVisible: vi.fn(() => () => {}),
+    subscribeVisible: vi.fn<AppApi["subscribeVisible"]>(() => () => {}),
     bounds: vi.fn(() => ({ width: 1040, height: 600 })),
     registerShortcut: vi.fn(() => () => {}),
   };
@@ -36,6 +61,13 @@ const ui = (api: AppApi, args: ProjectsArgs) => (
     <ProjectsApp windowId="projects" args={args} api={api} />
   </WindowIdContext>
 );
+
+// Taken before any test renders, so a test that sorts the shared lists in place
+// cannot change what it is compared with.
+const BEFORE = {
+  all: staticContent.entries().map((e) => e.id),
+  featured: staticContent.featuredEntries().map((e) => e.id),
+};
 
 const FEATURED = [
   "bash-shell",
@@ -69,6 +101,12 @@ const selected = (c: HTMLElement) =>
     e.getAttribute("data-entry-id"),
   );
 const count = (c: HTMLElement) => c.querySelector("[data-count]")?.textContent;
+const index = (c: HTMLElement) =>
+  c.querySelector("[data-carousel-index]")?.firstChild?.textContent;
+const front = (c: HTMLElement) =>
+  c.querySelector("[data-front]")?.getAttribute("data-entry-id");
+const next = () =>
+  fireEvent.click(screen.getByRole("button", { name: "Next item" }));
 const pressed = () =>
   Object.fromEntries(
     [
@@ -242,8 +280,10 @@ describe("ProjectsApp", () => {
     fireEvent.click(item(container, "emberhacks"));
     expect(selected(container)).toEqual(["emberhacks"]);
 
-    // The app never writes its own args, its title or the URL.
+    // The app never writes its own args, its title or the URL. It does read
+    // its visibility, for the ring.
     for (const [name, mock] of Object.entries(mocks)) {
+      if (name === "isVisible" || name === "subscribeVisible") continue;
       expect(mock, name).not.toHaveBeenCalled();
     }
   });
@@ -262,24 +302,109 @@ describe("ProjectsApp", () => {
     expect(screen.getByText("Nothing here yet.")).toBeTruthy();
     expect(count(container)).toBe("0 items");
     expect(container.querySelectorAll("[data-entry-id]")).toHaveLength(0);
-    expect(container.querySelector("[data-projects-grid]")).toBeNull();
+    expect(container.querySelector("[data-carousel]")).toBeNull();
   });
 
   it("neither sorts the shared lists nor changes the args", () => {
     const { api } = makeApi();
-    const before = {
-      all: staticContent.entries().map((e) => e.id),
-      featured: staticContent.featuredEntries().map((e) => e.id),
-    };
     const args = Object.freeze({ item: "pong" });
     const { container } = render(ui(api, args));
     press("Projects");
     press("All");
     expect(ids(container)).toHaveLength(23);
-    expect(staticContent.entries().map((e) => e.id)).toEqual(before.all);
+    expect(staticContent.entries().map((e) => e.id)).toEqual(BEFORE.all);
     expect(staticContent.featuredEntries().map((e) => e.id)).toEqual(
-      before.featured,
+      BEFORE.featured,
     );
     expect(args).toEqual({ item: "pong" });
+  });
+
+  it("follows the window's visibility", () => {
+    const { api, mocks } = makeApi();
+    const unsubscribe = vi.fn();
+    let callback: (visible: boolean) => void = () => {};
+    mocks.subscribeVisible.mockImplementation((cb) => {
+      callback = cb;
+      return unsubscribe;
+    });
+    const { unmount } = render(ui(api, {}));
+    expect(mocks.subscribeVisible).toHaveBeenCalledTimes(1);
+    expect(unsubscribe).not.toHaveBeenCalled();
+
+    next();
+    frames(100);
+    expect(vi.getTimerCount()).toBe(1);
+    act(() => callback(false));
+    expect(vi.getTimerCount()).toBe(0);
+
+    unmount();
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts with the ring paused when the window is hidden", () => {
+    const { api, mocks } = makeApi();
+    mocks.isVisible.mockReturnValue(false);
+    const { container } = render(ui(api, {}));
+    next();
+    expect(index(container)).toBe("2 / 13");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("rebuilds the ring for new args", () => {
+    const { api } = makeApi();
+    const { container, rerender } = render(ui(api, {}));
+    expect(index(container)).toBe("1 / 13");
+
+    rerender(ui(api, { item: "utmist-ai2" }));
+    expect(front(container)).toBe("utmist-ai2");
+    expect(index(container)).toBe("12 / 13");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("keeps the ring for the same args object", () => {
+    const { api } = makeApi();
+    const first: ProjectsArgs = {};
+    const { container, rerender } = render(ui(api, first));
+    next();
+    frames(1000);
+    expect(index(container)).toBe("2 / 13");
+
+    // A key that changes on every render would rebuild the ring at item 1.
+    rerender(ui(api, first));
+    expect(index(container)).toBe("2 / 13");
+    expect(front(container)).toBe("tetris-asm");
+  });
+
+  it("rebuilds the ring for a chip", () => {
+    const { api } = makeApi();
+    const { container } = render(ui(api, {}));
+    press("Hackathons");
+    expect(index(container)).toBe("1 / 2");
+    expect(front(container)).toBe("emberhacks");
+
+    press("All");
+    expect(index(container)).toBe("1 / 23");
+    fireEvent.click(item(container, "pong"));
+    frames(1000);
+    expect(index(container)).toBe("18 / 23");
+
+    // The selected entry stays in front, with no animation.
+    press("Projects");
+    expect(front(container)).toBe("pong");
+    expect(index(container)).toBe("12 / 17");
+    expect(selected(container)).toEqual(["pong"]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("cancels the old ring's frame when a chip replaces it", () => {
+    const { api } = makeApi();
+    const { container } = render(ui(api, {}));
+    press("All");
+    fireEvent.click(item(container, "pong"));
+    frames(100);
+    expect(vi.getTimerCount()).toBe(1);
+    press("Hackathons");
+    expect(vi.getTimerCount()).toBe(0);
+    expect(index(container)).toBe("1 / 2");
   });
 });
