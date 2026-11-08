@@ -57,6 +57,19 @@ interface Move {
   to: Point;
 }
 
+// From the press point, never by summing ticks, so the window lines up with
+// the pointer again after the clamp has held it.
+function target(s: Session, e: { clientX: number; clientY: number }): Point {
+  return clampToWorkArea(
+    {
+      x: s.start.x + (e.clientX - s.press.x) / s.scale,
+      y: s.start.y + (e.clientY - s.press.y) / s.scale,
+    },
+    s.width,
+    s.area,
+  );
+}
+
 /**
  * Drags a window by a handle, with mouse or touch, at any screen scale. The
  * caller spreads `handleProps` on the handle. Scale and work area are read at
@@ -76,10 +89,20 @@ export function useDrag(
 
   const onDragEnd = options?.onDragEnd;
 
-  const finish = (e: PointerEvent<HTMLElement>) => {
+  // pointerup carries the release point, and Chromium has delivered it before
+  // the last queued pointermove, so a release moves the window there.
+  // pointercancel and lostpointercapture keep the last move.
+  const finish = (e: PointerEvent<HTMLElement>, release: boolean) => {
     const s = session.current;
     if (!s || s.pointerId !== e.pointerId) return;
     session.current = null;
+    if (release) {
+      const to = target(s, e);
+      if (to.x !== s.last.x || to.y !== s.last.y) {
+        s.last = to;
+        write({ id: windowId, to });
+      }
+    }
     write.flush();
     setDragging(false);
     onDragEnd?.(s.last);
@@ -105,22 +128,13 @@ export function useDrag(
     onPointerMove(e) {
       const s = session.current;
       if (!s || s.pointerId !== e.pointerId) return;
-      // From the press point, never by summing ticks, so the window lines up
-      // with the pointer again after the clamp has held it.
-      const to = clampToWorkArea(
-        {
-          x: s.start.x + (e.clientX - s.press.x) / s.scale,
-          y: s.start.y + (e.clientY - s.press.y) / s.scale,
-        },
-        s.width,
-        s.area,
-      );
+      const to = target(s, e);
       s.last = to;
       write({ id: windowId, to });
     },
-    onPointerUp: finish,
-    onPointerCancel: finish,
-    onLostPointerCapture: finish,
+    onPointerUp: (e) => finish(e, true),
+    onPointerCancel: (e) => finish(e, false),
+    onLostPointerCapture: (e) => finish(e, false),
     style: { touchAction: "none", userSelect: "none" },
   };
 
