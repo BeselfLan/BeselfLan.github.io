@@ -117,3 +117,97 @@ test("the signature is visible in the bottom right", async ({ page }) => {
   expect(s.x + s.width).toBeLessThanOrEqual(box.x + box.width + 1);
   expect(s.y + s.height).toBeLessThanOrEqual(box.y + box.height + 1);
 });
+
+test.describe("the popovers", () => {
+  const systemMenu = (page: Page) =>
+    page.getByRole("dialog", { name: "System menu" });
+  const calendar = (page: Page) =>
+    page.getByRole("dialog", { name: "Calendar and notifications" });
+
+  /** Opens the System menu and chooses one of its items. */
+  async function choose(page: Page, item: string) {
+    await page.getByRole("button", { name: "System menu" }).click();
+    await systemMenu(page).getByRole("menuitem", { name: item }).click();
+  }
+
+  test("the calendar opens under the clock, inside the screen", async ({
+    page,
+  }) => {
+    // The scale is about 0.889 here and the box is about 60 px from the left,
+    // so a popover portalled to the body would land visibly off.
+    await page.setViewportSize({ width: 1400, height: 800 });
+    await openDesktop(page);
+
+    const clock = page.locator("[data-clock]");
+    await clock.click();
+    await expect(calendar(page)).toBeVisible();
+
+    // The bar slides in over 300 ms and the popover is placed from the rect
+    // the click read, so check the settled boxes.
+    await expect(async () => {
+      const box = await rect(page.locator("[data-screen-box]"));
+      const bar = await rect(page.locator("[data-topbar]"));
+      const c = await rect(clock);
+      const d = await rect(calendar(page));
+      expect(d.x).toBeGreaterThanOrEqual(box.x - 1);
+      expect(d.y).toBeGreaterThanOrEqual(bar.y + bar.height - 0.5);
+      expect(d.x + d.width).toBeLessThanOrEqual(box.x + box.width + 1);
+      expect(d.y + d.height).toBeLessThanOrEqual(box.y + box.height + 1);
+      // Centred under the clock, whatever the scale.
+      expect(Math.abs(d.x + d.width / 2 - (c.x + c.width / 2))).toBeLessThan(2);
+    }).toPass();
+
+    await page.keyboard.press("Escape");
+    await expect(calendar(page)).toHaveCount(0);
+    await expect(clock).toBeFocused();
+
+    // A press on the wallpaper, well away from the calendar, closes it too.
+    await clock.click();
+    await expect(calendar(page)).toBeVisible();
+    const box = await rect(page.locator("[data-screen-box]"));
+    const s = box.width / 1440;
+    await page.mouse.click(box.x + 300 * s, box.y + 600 * s);
+    await expect(calendar(page)).toHaveCount(0);
+  });
+
+  test("Settings lands in the calendar list", async ({ page }) => {
+    await openDesktop(page);
+    await page.getByRole("button", { name: "System menu" }).click();
+    // A pattern, so #18 does not have to edit this test.
+    await expect(systemMenu(page)).toContainText(
+      /Media server: (unknown|online|offline)/,
+    );
+    await systemMenu(page).getByRole("menuitem", { name: "Settings" }).click();
+    await expect(systemMenu(page)).toHaveCount(0);
+
+    await page.locator("[data-clock]").click();
+    const list = page.getByRole("list", { name: "Notifications" });
+    await expect(list).toContainText("Settings");
+    await expect(list).toContainText("The Settings app is coming soon.");
+  });
+
+  test("Restart replays the boot", async ({ page }) => {
+    await openDesktop(page);
+    await choose(page, "Restart");
+    await expect(page.locator("[data-desktop]")).toHaveCount(0);
+    await expect(page.locator('[data-boot-stage="boot-log"]')).toBeAttached({
+      timeout: 10_000,
+    });
+    await expect(page.locator("[data-desktop]")).toBeVisible({
+      timeout: 15_000,
+    });
+  });
+
+  test("Power Off shuts down", async ({ page }) => {
+    await openDesktop(page);
+    await choose(page, "Power Off");
+    await expect(page.locator("[data-desktop]")).toHaveCount(0, {
+      timeout: 2_000,
+    });
+    await expect(page.locator('[data-boot-stage="off"]')).toBeAttached({
+      timeout: 2_000,
+    });
+    // The screen stays black here. The way back is the power button on the
+    // base, which comes with #14, so the test ends.
+  });
+});
