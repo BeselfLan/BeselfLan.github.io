@@ -21,6 +21,14 @@
 # One line per encoded file goes to stderr: "convert: <id>.<ext> fps=<n>/<d>
 # crf=<n> bytes=<n>", where fps is the rate used, unreduced (50/2). Stdout is
 # the manifest entry.
+#
+# Measured on the three demo GIFs with ffmpeg version 8.0.1-3ubuntu2, 2026-11-08.
+# Nothing in the script depends on these rows: the settings are derived from
+# each input, and they are written down only to show what the rules give.
+#   id          fps in>out   mp4 crf   mp4 bytes   webm crf   webm bytes
+#   3d-engine   50>25        23        164556      33         164499
+#   deadknight  5>5          27        1242133     33         805829
+#   fnaf        50>25        26        1467465     36         1391500
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
