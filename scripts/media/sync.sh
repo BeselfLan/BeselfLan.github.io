@@ -8,7 +8,7 @@ set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 src=${MEDIA_SYNC_SOURCE:-$root/apps/api/media}
-target=${MEDIA_SYNC_TARGET:?set MEDIA_SYNC_TARGET, for example deploy@vps.example.com:/srv/beselfos/media}
+target=${MEDIA_SYNC_TARGET:?set MEDIA_SYNC_TARGET, for example user@host:/srv/beselfos/media}
 
 [[ -f $src/manifest.json ]] || { echo "sync: no manifest.json in $src" >&2; exit 1; }
 # Refuses a manifest that names a file that is not in the folder.
