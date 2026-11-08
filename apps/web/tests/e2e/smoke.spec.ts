@@ -35,3 +35,35 @@ test("the composed page renders with tokens and fonts, no console errors", async
 
   expect(errors).toEqual([]);
 });
+
+// The dev-only /e2e-css/ route (#86) holds a CSS Module class, a bare class of
+// the same name, and a Tailwind utility. Under the Tailwind-only Turbopack rule
+// a module lost its scoping: its class map came out empty and `.probe` painted
+// every element with that class.
+test("CSS Modules are scoped, and Tailwind still compiles", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("console", (msg) => {
+    if (msg.type() === "error") errors.push(msg.text());
+  });
+  page.on("pageerror", (err) => errors.push(err.message));
+
+  await page.goto("/e2e-css/");
+  const moduleProbe = page.locator("[data-css-module-probe]");
+  const rawProbe = page.locator("[data-css-raw-probe]");
+  const tailwindProbe = page.locator("[data-tailwind-probe]");
+  await expect(moduleProbe).toBeVisible();
+
+  // The import is a real class map: a hashed name, not `probe` and not empty.
+  const className = await moduleProbe.getAttribute("class");
+  expect(className ?? "").not.toBe("");
+  expect(className).not.toBe("probe");
+  await expect(moduleProbe).toHaveCSS("color", "rgb(1, 2, 3)");
+  // The module's selector is hashed, so the bare class does not match it.
+  await expect(rawProbe).not.toHaveCSS("color", "rgb(1, 2, 3)");
+  // Tailwind still compiles on the global stylesheet: --os-orange.
+  await expect(tailwindProbe).toHaveCSS("color", "rgb(233, 84, 32)");
+
+  expect(errors).toEqual([]);
+});

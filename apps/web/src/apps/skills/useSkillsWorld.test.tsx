@@ -504,6 +504,27 @@ describe("useSkillsWorld", () => {
       expect(spy).toHaveBeenCalledWith({ x: 0, y: 0, width: 700, height: 400 });
     });
 
+    it("observes once under Strict Mode and lets go on unmount", () => {
+      const { api } = makeApi();
+      const view = render(
+        <StrictMode>
+          <Harness api={api} ids={IDS} hold={holder()} withStage />
+        </StrictMode>,
+      );
+      // Strict Mode mounts, unmounts and mounts again: the first observer is
+      // let go, and the second one watches the stage and stays.
+      expect(
+        FakeObserver.all.map((o) => o.disconnect.mock.calls.length),
+      ).toEqual([1, 0]);
+      expect(FakeObserver.all[1].observe).toHaveBeenCalledWith(
+        view.container.querySelector("[data-stage]"),
+      );
+      view.unmount();
+      expect(
+        FakeObserver.all.map((o) => o.disconnect.mock.calls.length),
+      ).toEqual([1, 1]);
+    });
+
     it("disconnects on unmount, and never watches without a stage", () => {
       const { api } = makeApi();
       const view = render(
