@@ -7,6 +7,8 @@ import {
   teardownBrowser,
 } from "../../../tests/unit/window/mountLayer";
 import { BootSequence } from "./BootSequence";
+import { BOOTED_KEY } from "./mode";
+import { REDUCED_QUERY } from "./reducedMotion";
 import {
   bootLogDuration,
   buildBootScript,
@@ -79,6 +81,11 @@ function toDesktop(): void {
 
 beforeEach(() => {
   setupBrowser();
+  // setupBrowser clears only localStorage, and jsdom keeps sessionStorage
+  // across the tests in a file, so a flag written by one test would make the
+  // next one a fast boot. The URL is reset for the same reason.
+  sessionStorage.clear();
+  window.history.replaceState(null, "", "/");
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   vi.mocked(buildBootScript).mockClear();
 });
@@ -419,5 +426,293 @@ describe("BootSequence", () => {
     expect(lineEls()).toHaveLength(built().length);
     walk(400);
     expect(stage()).toBe("desktop");
+  });
+});
+
+/** A key press and a pointer press, as the listeners hear them. */
+const press = {
+  key: () => fireEvent.keyDown(window, { key: " " }),
+  pointer: () => fireEvent.pointerDown(document.body),
+};
+
+/** Mount, then walk lid-opening and power-on: each walk moves one stage. */
+function toFirmware(): void {
+  walk(1000);
+  walk(300);
+  expect(stage()).toBe("firmware");
+}
+
+/** Fast and skip boots have 0 ms stages, and each stage sets the next timer. */
+function walkZero(until: string): void {
+  for (let i = 0; i < 12 && stage() !== until; i++) walk(0);
+  expect(stage()).toBe(until);
+}
+
+describe("skipping by any key or press", () => {
+  it.each([
+    ["a key", "firmware", press.key],
+    ["a key", "boot-log", press.key],
+    ["a press", "firmware", press.pointer],
+    ["a press", "boot-log", press.pointer],
+  ] as const)("%s in %s skips", (_, at, doPress) => {
+    render(<BootSequence />);
+    if (at === "firmware") {
+      toFirmware();
+    } else {
+      toBootLog();
+      walk(700);
+    }
+    expect(stage()).toBe(at);
+    doPress();
+    expect(stage()).toBe("desktop-enter");
+    walk(400);
+    expect(stage()).toBe("desktop");
+  });
+
+  it("a key in boot-log stops the log where it was", () => {
+    render(<BootSequence />);
+    toBootLog();
+    walk(cumulative(built())[4]);
+    const printed = lineEls().length;
+    expect(printed).toBeGreaterThan(0);
+    press.key();
+    walk(300);
+    expect(lineEls()).toHaveLength(printed);
+  });
+
+  it("nothing else is listening", () => {
+    const skip = vi.spyOn(os.boot, "skip");
+    const { unmount } = render(<BootSequence />);
+    const heard = (name: string) => {
+      press.key();
+      press.pointer();
+      expect(skip, `at ${name}`).not.toHaveBeenCalled();
+    };
+    heard("lid-opening");
+    walk(1000);
+    expect(stage()).toBe("power-on");
+    heard("power-on");
+    walk(300);
+    walk(500);
+    expect(stage()).toBe("boot-log");
+    walk(boot().bootLogMs);
+    expect(stage()).toBe("desktop-enter");
+    heard("desktop-enter");
+    walk(400);
+    expect(stage()).toBe("desktop");
+    heard("desktop");
+    unmount();
+    heard("unmount");
+    skip.mockRestore();
+  });
+
+  it("stops listening once the skip has happened", () => {
+    const skip = vi.spyOn(os.boot, "skip");
+    render(<BootSequence />);
+    toFirmware();
+    press.key();
+    expect(skip).toHaveBeenCalledTimes(1);
+    expect(stage()).toBe("desktop-enter");
+    // The listener went with the stage: a second press is not heard.
+    press.key();
+    press.pointer();
+    expect(skip).toHaveBeenCalledTimes(1);
+    skip.mockRestore();
+  });
+
+  it("does not stop a key's default action", () => {
+    render(<BootSequence />);
+    toFirmware();
+    const event = new KeyboardEvent("keydown", {
+      key: "r",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    window.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+    expect(stage()).toBe("desktop-enter");
+  });
+
+  it("the firmware screen promises the key", () => {
+    render(<BootSequence />);
+    walk(1000);
+    expect(stage()).toBe("power-on");
+    expect(screen.queryByText("Press any key to skip")).toBeNull();
+    walk(300);
+    expect(stage()).toBe("firmware");
+    expect(screen.getByText("Press any key to skip")).toBeTruthy();
+    walk(500);
+    expect(stage()).toBe("boot-log");
+    expect(screen.queryByText("Press any key to skip")).toBeNull();
+  });
+});
+
+describe("the mode a load picks", () => {
+  it("?boot=skip lands on the desktop at once", () => {
+    window.history.replaceState(null, "", "/?boot=skip");
+    render(<BootSequence />);
+    expect(boot().mode).toBe("skip");
+    walkZero("desktop");
+    expect(root()).toBeNull();
+  });
+
+  it("?boot=fast fades from black", () => {
+    window.history.replaceState(null, "", "/?boot=fast");
+    render(<BootSequence />);
+    expect(boot().mode).toBe("fast");
+    walkZero("desktop-enter");
+    // Fails without the guard on the last line: the stage would draw the whole
+    // log it skipped, and fade that out.
+    expect(lineEls()).toHaveLength(0);
+    expect(boot().lineIndex).toBe(0);
+    expect(root()!.style.animationDuration).toBe("400ms");
+    walk(399);
+    expect(stage()).toBe("desktop-enter");
+    expect(lineEls()).toHaveLength(0);
+    walk(1);
+    expect(stage()).toBe("desktop");
+  });
+
+  it("a deep link boots fast", () => {
+    window.history.replaceState(null, "", "/?app=hello");
+    render(<BootSequence />);
+    expect(boot().mode).toBe("fast");
+  });
+
+  it("?boot=full beats a deep link and the session flag", () => {
+    sessionStorage.setItem(BOOTED_KEY, "1");
+    window.history.replaceState(null, "", "/?app=hello&boot=full");
+    render(<BootSequence />);
+    expect(boot().mode).toBe("full");
+    expect(stage()).toBe("lid-opening");
+    walk(999);
+    expect(stage()).toBe("lid-opening");
+  });
+
+  it("the session flag is written at the desktop", () => {
+    render(<BootSequence />);
+    expect(sessionStorage.getItem(BOOTED_KEY)).toBeNull();
+    toBootLog();
+    walk(boot().bootLogMs);
+    expect(stage()).toBe("desktop-enter");
+    expect(sessionStorage.getItem(BOOTED_KEY)).toBeNull();
+    walk(400);
+    expect(stage()).toBe("desktop");
+    expect(sessionStorage.getItem(BOOTED_KEY)).toBe("1");
+  });
+
+  it("a second load in the session is fast", () => {
+    const first = render(<BootSequence />);
+    expect(boot().mode).toBe("full");
+    toDesktop();
+    expect(sessionStorage.getItem(BOOTED_KEY)).toBe("1");
+    first.unmount();
+
+    act(() => {
+      useOS.setState(useOS.getInitialState(), true);
+    });
+    render(<BootSequence />);
+    expect(stage()).toBe("lid-opening");
+    expect(boot().mode).toBe("fast");
+    walkZero("desktop-enter");
+    walk(400);
+    expect(stage()).toBe("desktop");
+  });
+
+  it("a skip boot also writes the flag", () => {
+    window.history.replaceState(null, "", "/?boot=skip");
+    render(<BootSequence />);
+    walkZero("desktop");
+    expect(sessionStorage.getItem(BOOTED_KEY)).toBe("1");
+  });
+
+  it("a restart replays the full boot, not the mode the load picked", () => {
+    window.history.replaceState(null, "", "/?boot=fast");
+    render(<BootSequence />);
+    walkZero("desktop-enter");
+    walk(400);
+    expect(boot().mode).toBe("fast");
+    act(() => os.boot.restart());
+    expect(boot().mode).toBe("full");
+    expect(stage()).toBe("restarting");
+  });
+});
+
+describe("reduced motion", () => {
+  const toPowerOn = () => {
+    // Forced full, so the 300 ms stage is there to look at.
+    window.history.replaceState(null, "", "/?boot=full");
+    render(<BootSequence />);
+    walk(1000);
+    expect(stage()).toBe("power-on");
+  };
+  const glow = () => document.querySelector(".boot-glow");
+  const scanlines = () => document.querySelector(".boot-scanlines");
+  const stubSystemReduces = () =>
+    vi.stubGlobal("matchMedia", (q: string) => ({
+      matches: q === REDUCED_QUERY,
+      addEventListener() {},
+      removeEventListener() {},
+    }));
+
+  it("the default draws the animated glow and the scanlines", () => {
+    toPowerOn();
+    expect(glow()?.classList.contains("boot-glow-animated")).toBe(true);
+    expect(scanlines()).not.toBeNull();
+  });
+
+  it("reduced motion draws no scanlines", () => {
+    os.settings.update({ reducedMotion: "on" });
+    toPowerOn();
+    expect(scanlines()).toBeNull();
+    expect(glow()).not.toBeNull();
+    expect(glow()!.classList.contains("boot-glow-animated")).toBe(false);
+  });
+
+  it("follows the system query while the setting is 'system'", () => {
+    stubSystemReduces();
+    toPowerOn();
+    expect(scanlines()).toBeNull();
+    expect(glow()!.classList.contains("boot-glow-animated")).toBe(false);
+  });
+
+  it("'off' plays the effects even when the system asks for less", () => {
+    stubSystemReduces();
+    os.settings.update({ reducedMotion: "off" });
+    toPowerOn();
+    expect(scanlines()).not.toBeNull();
+    expect(glow()!.classList.contains("boot-glow-animated")).toBe(true);
+  });
+
+  it("reduced motion on load is a fast boot", () => {
+    os.settings.update({ reducedMotion: "on" });
+    render(<BootSequence />);
+    expect(boot().mode).toBe("fast");
+  });
+
+  it("keeps the firmware bar and the fade", () => {
+    os.settings.update({ reducedMotion: "on" });
+    window.history.replaceState(null, "", "/?boot=full");
+    render(<BootSequence />);
+    toFirmware();
+    expect(document.querySelector("[data-boot-progress]")).not.toBeNull();
+    walk(500);
+    walk(boot().bootLogMs);
+    expect(stage()).toBe("desktop-enter");
+    expect(root()!.style.animationDuration).toBe("400ms");
+  });
+});
+
+describe("the login stage", () => {
+  it("is off by default", () => {
+    render(<BootSequence />);
+    const seen = new Set<string>([stage()]);
+    for (let i = 0; i < 12 && stage() !== "desktop"; i++) {
+      walk(boot().bootLogMs + 2000);
+      seen.add(stage());
+    }
+    expect(stage()).toBe("desktop");
+    expect(seen.has("login")).toBe(false);
   });
 });

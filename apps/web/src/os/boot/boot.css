@@ -7,9 +7,11 @@
  *
  * Each stage mounts and unmounts its own screen, so every animation runs once
  * from its first frame, and its length is set inline (animation-duration) from
- * the stage table. Only the effects that are decoration sit behind the
- * reduced-motion query. The progress bar and the fade-out say what is
- * happening, so they stay.
+ * the stage table. Reduced motion is decided in JS (useBootReducedMotion), so
+ * the setting's "on" and "off" count as well as the system query: the power-on
+ * view leaves out the animated classes and the scanlines. The progress bar and
+ * the fade-out say what is happening, and an opacity change is not movement,
+ * so they stay.
  */
 
 @keyframes boot-glow-in {
@@ -58,9 +60,14 @@
   );
 }
 
-/* CRT scanlines. Under reduced motion there are none. */
+/* The backlight fading in. Without this class it is a still gradient. */
+.boot-glow-animated {
+  opacity: 0;
+  animation: boot-glow-in linear forwards;
+}
+
+/* CRT scanlines, fading out. Under reduced motion they are not rendered. */
 .boot-scanlines {
-  display: none;
   background: repeating-linear-gradient(
     to bottom,
     rgb(255 255 255 / 0.07) 0,
@@ -68,18 +75,7 @@
     transparent 1px,
     transparent 3px
   );
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .boot-glow {
-    opacity: 0;
-    animation: boot-glow-in linear forwards;
-  }
-
-  .boot-scanlines {
-    display: block;
-    animation: boot-scan-out linear forwards;
-  }
+  animation: boot-scan-out linear forwards;
 }
 
 /* The firmware bar. It is full without the animation, which only draws it. */

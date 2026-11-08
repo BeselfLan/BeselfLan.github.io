@@ -9,28 +9,36 @@ import "./boot.css";
 // function, not a component, because it is picked by stage during render.
 //
 // Every length comes from `durationMs`, which the caller reads from the stage
-// table, so a changed table or #14's fast mode stays in step. Nothing here
-// reads the clock or the browser.
+// table, so a changed table or a fast boot stays in step. Nothing here reads
+// the clock or the browser: reduced motion arrives as a prop.
 
 export interface ViewProps {
   /** The stage's duration, for the animation inside it. */
   durationMs: number;
   /** The lines printed so far. */
   lines: readonly BootLine[];
+  /** Reduced motion (plan 3.4): no scanlines, and a backlight that only sits. */
+  reduced: boolean;
 }
 
 const inMs = (ms: number) => ({ animationDuration: `${ms}ms` });
 
-// Nothing over the black root. #14 gives restarting, login and shutting-down
-// their own views, and #75's lid opens over lid-opening.
+// Nothing over the black root: the stages with no screen of their own. #14
+// gives restarting, login and shutting-down their views in the next commit,
+// and #75's lid opens over lid-opening.
 const black = (): ReactNode => null;
 
-function powerOn({ durationMs }: ViewProps): ReactNode {
+function powerOn({ durationMs, reduced }: ViewProps): ReactNode {
+  // Under reduced motion the backlight is a still gradient and there are no
+  // scanlines, whatever the CSS says: the flag decides, not a media query.
+  if (reduced) {
+    return <div aria-hidden="true" className="boot-glow absolute inset-0" />;
+  }
   return (
     <>
       <div
         aria-hidden="true"
-        className="boot-glow absolute inset-0"
+        className="boot-glow boot-glow-animated absolute inset-0"
         style={inMs(durationMs)}
       />
       <div
@@ -58,7 +66,8 @@ function firmware({ durationMs }: ViewProps): ReactNode {
           style={inMs(durationMs)}
         />
       </div>
-      {/* #14 adds its "Press any key to skip" hint here, with the listener. */}
+      {/* BootSequence listens for any key or press in this stage. */}
+      <p className="text-sm text-os-panel-fg/70">Press any key to skip</p>
     </div>
   );
 }
