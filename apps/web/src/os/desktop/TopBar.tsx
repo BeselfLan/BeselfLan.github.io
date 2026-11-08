@@ -78,8 +78,8 @@ export function TopBar() {
             os.shell.setPopover(openPopover === "calendar" ? null : "calendar")
           }
         >
-          <span>{clock.date}</span>
-          <span>{clock.time}</span>
+          {/* The space is not drawn in a flex row; it keeps the name readable. */}
+          <span>{clock.date}</span> <span>{clock.time}</span>
         </Button>
 
         <div className="ml-auto flex items-center gap-1">
