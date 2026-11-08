@@ -20,6 +20,24 @@ export async function rect(locator: Locator) {
   return box;
 }
 
+export const frame = (page: Page, id: string) =>
+  page.locator(`[data-window-id="${id}"]`);
+
+const titleBar = (page: Page, id: string) =>
+  frame(page, id).locator("[data-titlebar]");
+
+/** The id of the window under a client point, or null. */
+async function topWindowAt(page: Page, x: number, y: number) {
+  return page.evaluate(
+    ([px, py]) =>
+      document
+        .elementFromPoint(px, py)
+        ?.closest("[data-window-id]")
+        ?.getAttribute("data-window-id") ?? null,
+    [x, y],
+  );
+}
+
 export async function open(
   page: Page,
   width: number,
@@ -53,6 +71,16 @@ test("the screen fills its parent and clips", async ({ page }) => {
   expect(parent.width).toBeCloseTo(1200, 0);
   expect(parent.height).toBeCloseTo(600, 0);
   await expect(boxEl).toHaveCSS("overflow", "hidden");
+  await expect(boxEl.locator("..")).toHaveCSS("overflow", "hidden");
+});
+
+test("the screen letterboxes vertically", async ({ page }) => {
+  await open(page, 960, 800, 2 / 3);
+  const box = await rect(page.locator("[data-screen-box]"));
+  expect(box.width).toBeCloseTo(960, 0);
+  expect(box.height).toBeCloseTo(600, 0);
+  expect(box.x).toBeCloseTo(0, 0);
+  expect(box.y).toBeCloseTo(100, 0);
 });
 
 test("fullscreen is one to one", async ({ page }) => {
@@ -114,7 +142,13 @@ async function openWindow(
   scale: number,
 ) {
   await open(page, width, height, scale);
-  await expect(page.getByTestId("harness-window")).toBeVisible();
+  await expect(frame(page, "alpha")).toBeVisible();
+  await expect(frame(page, "beta")).toBeVisible();
+  // The window is 400 wide, so its width proves the scale it renders at.
+  await expect(async () => {
+    const alpha = await rect(frame(page, "alpha"));
+    expect(alpha.width).toBeCloseTo(400 * scale, 0);
+  }).toPass();
 }
 
 async function expectMovedBy(
@@ -124,7 +158,7 @@ async function expectMovedBy(
   dy: number,
 ) {
   await expect(async () => {
-    const now = await rect(page.getByTestId("harness-window"));
+    const now = await rect(frame(page, "alpha"));
     expect(Math.abs(now.x - before.x - dx)).toBeLessThanOrEqual(1);
     expect(Math.abs(now.y - before.y - dy)).toBeLessThanOrEqual(1);
   }).toPass();
@@ -138,8 +172,8 @@ for (const [width, height, scale] of [
     page,
   }) => {
     await openWindow(page, width, height, scale);
-    const before = await rect(page.getByTestId("harness-window"));
-    await mouseDrag(page, page.getByTestId("harness-handle"), 150, 90);
+    const before = await rect(frame(page, "alpha"));
+    await mouseDrag(page, titleBar(page, "alpha"), 150, 90);
     await expectMovedBy(page, before, 150, 90);
   });
 }
@@ -149,9 +183,9 @@ test.describe("touch", () => {
 
   test("a touch drag tracks the pointer", async ({ page }) => {
     await openWindow(page, 960, 600, 2 / 3);
-    const handle = page.getByTestId("harness-handle");
+    const handle = titleBar(page, "alpha");
     await expect(handle).toHaveCSS("touch-action", "none");
-    const before = await rect(page.getByTestId("harness-window"));
+    const before = await rect(frame(page, "alpha"));
     await touchDrag(page, handle, 150, 90);
     await expectMovedBy(page, before, 150, 90);
   });
@@ -159,7 +193,7 @@ test.describe("touch", () => {
 
 test("the clamp holds in the browser", async ({ page }) => {
   await openWindow(page, 960, 600, 2 / 3);
-  const handle = page.getByTestId("harness-handle");
+  const handle = titleBar(page, "alpha");
   const box = await rect(handle);
   await page.mouse.move(box.x + 5, box.y + box.height / 2);
   await page.mouse.down();
@@ -167,8 +201,108 @@ test("the clamp holds in the browser", async ({ page }) => {
   await page.mouse.up();
   // 1400 and 860 screen units at scale 2/3.
   await expect(async () => {
-    const now = await rect(page.getByTestId("harness-window"));
+    const now = await rect(frame(page, "alpha"));
     expect(Math.abs(now.x - 933.3)).toBeLessThanOrEqual(1);
     expect(Math.abs(now.y - 573.3)).toBeLessThanOrEqual(1);
   }).toPass();
+});
+
+test("a press raises the back window", async ({ page }) => {
+  await openWindow(page, 960, 600, 2 / 3);
+  const alpha = await rect(frame(page, "alpha"));
+  const beta = await rect(frame(page, "beta"));
+  const x = (beta.x + alpha.x + alpha.width) / 2;
+  const y = (beta.y + alpha.y + alpha.height) / 2;
+  expect(await topWindowAt(page, x, y)).toBe("beta");
+  // The empty bottom left of Alpha, clear of Beta.
+  await page.mouse.click(alpha.x + 20, alpha.y + alpha.height - 20);
+  await expect.poll(() => topWindowAt(page, x, y)).toBe("alpha");
+});
+
+test("a press on the empty desktop reaches the desktop", async ({ page }) => {
+  await openWindow(page, 960, 600, 2 / 3);
+  const box = await rect(page.locator("[data-screen-box]"));
+  const s = box.width / 1440;
+  const hit = await page.evaluate(
+    ([px, py]) => {
+      const el = document.elementFromPoint(px, py);
+      return {
+        testId: el?.getAttribute("data-testid") ?? null,
+        inLayer: el?.closest("[data-window-layer]") != null,
+      };
+    },
+    [box.x + 1200 * s, box.y + 800 * s],
+  );
+  expect(hit).toEqual({ testId: "harness-desktop", inLayer: false });
+});
+
+test("minimise and restore keep the app's state, and close removes it", async ({
+  page,
+}) => {
+  await openWindow(page, 960, 600, 2 / 3);
+  const alpha = frame(page, "alpha");
+  const counter = alpha.getByRole("button", { name: /Pressed/ });
+  for (let i = 0; i < 3; i++) await counter.click();
+  await expect(counter).toHaveText("Pressed 3");
+
+  await alpha.getByRole("button", { name: "Minimise" }).click();
+  await expect(alpha).toBeHidden();
+  await page.getByRole("button", { name: "Open Alpha" }).click();
+  await expect(alpha).toBeVisible();
+  await expect(counter).toHaveText("Pressed 3");
+
+  // A button press must not start a drag, or the click lands on the bar.
+  await alpha.getByRole("button", { name: "Close" }).click();
+  await expect(frame(page, "alpha")).toHaveCount(0);
+  await page.getByRole("button", { name: "Open Alpha" }).click();
+  await expect(counter).toHaveText("Pressed 0");
+});
+
+test("maximise fills the work area", async ({ page }) => {
+  await openWindow(page, 960, 600, 2 / 3);
+  const box = await rect(page.locator("[data-screen-box]"));
+  const s = box.width / 1440;
+  const expectRect = async (x: number, y: number, w: number, h: number) => {
+    await expect(async () => {
+      const now = await rect(frame(page, "alpha"));
+      expect(Math.abs(now.x - (box.x + x * s))).toBeLessThanOrEqual(1);
+      expect(Math.abs(now.y - (box.y + y * s))).toBeLessThanOrEqual(1);
+      expect(Math.abs(now.width - w * s)).toBeLessThanOrEqual(1);
+      expect(Math.abs(now.height - h * s)).toBeLessThanOrEqual(1);
+    }).toPass();
+  };
+  await frame(page, "alpha").getByRole("button", { name: "Maximise" }).click();
+  await expectRect(64, 32, 1376, 868);
+  await frame(page, "alpha").getByRole("button", { name: "Restore" }).click();
+  await expectRect(200, 100, 400, 300);
+});
+
+test("the title is centred on the bar", async ({ page }) => {
+  await openWindow(page, 960, 600, 2 / 3);
+  const centres = await titleBar(page, "alpha").evaluate((bar) => {
+    const title = bar.querySelector("h2")!;
+    const range = document.createRange();
+    range.selectNodeContents(title);
+    const text = range.getBoundingClientRect();
+    const whole = bar.getBoundingClientRect();
+    return { text: text.x + text.width / 2, bar: whole.x + whole.width / 2 };
+  });
+  expect(Math.abs(centres.text - centres.bar)).toBeLessThanOrEqual(1);
+});
+
+test("children paint above the frames", async ({ page }) => {
+  await openWindow(page, 960, 600, 2 / 3);
+  const overlay = page.getByTestId("harness-overlay");
+  const inner = await rect(overlay);
+  const beta = await rect(frame(page, "beta"));
+  expect(inner.x).toBeGreaterThanOrEqual(beta.x);
+  expect(inner.y).toBeGreaterThanOrEqual(beta.y);
+  expect(inner.x + inner.width).toBeLessThanOrEqual(beta.x + beta.width);
+  expect(inner.y + inner.height).toBeLessThanOrEqual(beta.y + beta.height);
+  const hit = await page.evaluate(
+    ([px, py]) =>
+      document.elementFromPoint(px, py)?.getAttribute("data-testid") ?? null,
+    [inner.x + inner.width / 2, inner.y + inner.height / 2],
+  );
+  expect(hit).toBe("harness-overlay");
 });
