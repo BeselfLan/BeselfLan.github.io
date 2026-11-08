@@ -50,6 +50,26 @@ describe("frameThrottle", () => {
     expect(run).toHaveBeenCalledTimes(1);
   });
 
+  it("works again after flush", () => {
+    const run = vi.fn();
+    const t = frameThrottle<number>(run);
+    t(1);
+    t.flush();
+    t(2);
+    frames.run();
+    expect(run.mock.calls).toEqual([[1], [2]]);
+  });
+
+  it("works again after cancel", () => {
+    const run = vi.fn();
+    const t = frameThrottle<number>(run);
+    t(1);
+    t.cancel();
+    t(2);
+    frames.run();
+    expect(run.mock.calls).toEqual([[2]]);
+  });
+
   it("cancel drops the pending call", () => {
     const run = vi.fn();
     const t = frameThrottle<number>(run);
