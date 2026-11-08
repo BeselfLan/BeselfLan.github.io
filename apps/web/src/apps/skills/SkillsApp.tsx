@@ -1,12 +1,16 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useReducedMotionConfig } from "motion/react";
+import { useId, useMemo, useRef, useState } from "react";
 import type { AppProps } from "@/os/apps/types";
+import { Button } from "@/os/ui/Button";
 import { Chip } from "@/os/ui/Chip";
 import type { SkillsArgs } from "./index";
-import { FOOTER_HEIGHT, TOOLBAR_HEIGHT } from "./layout";
+import { FOOTER_HEIGHT, PANEL_WIDTH, TOOLBAR_HEIGHT } from "./layout";
 import { ICON_RADIUS } from "./physics/constants";
 import { useFullscreen } from "./screenMode";
+import { SkillList } from "./SkillList";
+import { SkillPanel } from "./SkillPanel";
 import { SkillsStage } from "./SkillsStage";
 import {
   TABS,
@@ -19,13 +23,24 @@ import {
 } from "./tabs";
 import "./skills.css";
 
-// The Skills window (plan 6.3, 6.4, 6.6, D13, D23): the five category tabs, the
-// floating stage of emblem buttons (SkillsStage.tsx), and the four practices as
-// footer labels. #90 adds the detail panel, the list view and the clickable
-// practices. This file reaches the OS through `api` only, never calls
-// `useScreen()` (registry.test.ts renders every app outside a Screen), and
-// never writes its own args, its title or the URL: the URL keeps what the
-// window was opened with.
+// The Skills window (plan 6.3, 6.4, 6.5, 6.6, D13, D16, D23): the five category
+// tabs, the floating stage of emblem buttons (SkillsStage.tsx) or the list view
+// of the same skills (SkillList.tsx), the detail panel of the selected skill
+// (SkillPanel.tsx), and the four practices as footer chips that open it.
+//
+// Selecting a skill, from an icon, a card or a practice chip, opens the panel;
+// `selectedId` is its open state. The panel sits over the right of the stage's
+// row, and the stage's loop moves its right wall in with it, so the icons are
+// pushed out from behind it. In the fullscreen mode (D4) the panel covers the
+// whole stage and the wall stays out: 45 icons could never settle in what is
+// left of a phone's width. List view is the default under reduced motion, until
+// the visitor presses the toggle; the stage, and with it the loop, is not
+// rendered then, and the list's own Practices section replaces the footer.
+//
+// This file reaches the OS through `api` only, never calls `useScreen()`
+// (registry.test.ts renders every app outside a Screen), and never writes its
+// own args, its title or the URL: the URL keeps what the window was opened
+// with. It opens no other app itself; the panel does, for "Used in".
 
 export default function SkillsApp({ args, api }: AppProps<SkillsArgs>) {
   // The view the window's args ask for. A re-open with other args is a new
@@ -49,7 +64,18 @@ export default function SkillsApp({ args, api }: AppProps<SkillsArgs>) {
     [view.tab, api.content],
   );
   const practices = useMemo(() => practicesOf(api.content), [api.content]);
-  const radius = useFullscreen() ? ICON_RADIUS.fullscreen : ICON_RADIUS.default;
+  const full = useFullscreen();
+  const radius = full ? ICON_RADIUS.fullscreen : ICON_RADIUS.default;
+
+  const panelId = useId();
+  const labelId = useId();
+  const rootRef = useRef<HTMLDivElement>(null);
+  // The visitor's choice of view, or null until they press the toggle. Until
+  // then the list is the default under reduced motion (6.6).
+  const reduced = useReducedMotionConfig() ?? false;
+  const [listChoice, setListChoice] = useState<boolean | null>(null);
+  const list = listChoice ?? reduced;
+  const open = view.selectedId !== null;
 
   // The selection stays if its skill is visible under the new tab (a practice
   // is visible under every tab), and clears if not.
@@ -60,13 +86,40 @@ export default function SkillsApp({ args, api }: AppProps<SkillsArgs>) {
     setOwn({ args, view: { tab, selectedId: kept } });
   }
 
-  // Selecting the selected icon keeps it selected: closing is #90's.
+  // Selecting the selected icon or card keeps it selected; the X, Escape and
+  // the open practice's own chip close the panel.
   function select(id: string) {
     setOwn({ args, view: { ...view, selectedId: id } });
   }
 
+  // Closes the panel. When focus was inside it (the X, or Escape from there)
+  // the panel is about to unmount, so focus goes back to whatever opened it,
+  // and not to the page (plan 8.2).
+  function close() {
+    const root = rootRef.current;
+    const id = view.selectedId;
+    const inPanel =
+      root
+        ?.querySelector("[data-skill-panel]")
+        ?.contains(document.activeElement) ?? false;
+    setOwn({ args, view: { ...view, selectedId: null } });
+    if (inPanel && root && id) {
+      root
+        .querySelector<HTMLElement>(
+          `[data-skill-id="${id}"], [data-skill-card="${id}"], [data-practice="${id}"] button`,
+        )
+        ?.focus({ preventScroll: true });
+    }
+  }
+
+  // A practice chip is a toggle: pressing the open one closes the panel.
+  function pressPractice(id: string) {
+    if (view.selectedId === id) close();
+    else select(id);
+  }
+
   return (
-    <div className="flex h-full flex-col text-os-panel-fg">
+    <div ref={rootRef} className="flex h-full flex-col text-os-panel-fg">
       {/* The window title already shows the name; the heading is for the page
           outline, and registry.test.ts looks for one named after the app. */}
       <h2 className="sr-only">Skills</h2>
@@ -86,25 +139,71 @@ export default function SkillsApp({ args, api }: AppProps<SkillsArgs>) {
             </Chip>
           ))}
         </div>
+        <Button
+          variant="ghost"
+          className="ml-auto"
+          aria-pressed={list}
+          onClick={() => setListChoice(!list)}
+        >
+          List view
+        </Button>
       </div>
 
-      <SkillsStage
-        skills={skills}
-        selectedId={view.selectedId}
-        onSelect={select}
-        api={api}
-        radius={radius}
-      />
-
-      <div
-        style={{ height: FOOTER_HEIGHT }}
-        className="flex shrink-0 items-center gap-2 border-t border-white/10 px-4"
-      >
-        <span className="text-xs opacity-70">Practices</span>
-        {practices.map((p) => (
-          <Chip key={p.id}>{p.name}</Chip>
-        ))}
+      <div className="relative flex min-h-0 flex-1 overflow-hidden">
+        {list ? (
+          <SkillList
+            skills={skills}
+            practices={practices}
+            selectedId={view.selectedId}
+            onSelect={select}
+            panelId={panelId}
+            reserve={open && !full ? PANEL_WIDTH : 0}
+          />
+        ) : (
+          <SkillsStage
+            skills={skills}
+            selectedId={view.selectedId}
+            onSelect={select}
+            api={api}
+            radius={radius}
+            panelId={panelId}
+            wall={open && !full}
+          />
+        )}
+        {/* After the stage, so Tab reaches it after the icons. */}
+        {view.selectedId !== null && (
+          <SkillPanel
+            id={panelId}
+            skillId={view.selectedId}
+            api={api}
+            onClose={close}
+            full={full}
+          />
+        )}
       </div>
+
+      {!list && (
+        <div
+          role="group"
+          aria-labelledby={labelId}
+          style={{ height: FOOTER_HEIGHT }}
+          className="flex shrink-0 items-center gap-2 border-t border-white/10 px-4"
+        >
+          <span id={labelId} className="text-xs opacity-70">
+            Practices
+          </span>
+          {practices.map((p) => (
+            <span key={p.id} data-practice={p.id}>
+              <Chip
+                selected={view.selectedId === p.id}
+                onClick={() => pressPractice(p.id)}
+              >
+                {p.name}
+              </Chip>
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -4,9 +4,11 @@ import { Profiler, type ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { staticContent } from "@/content/static";
 import type { AppApi } from "@/os/apps/types";
+import type { Shortcut } from "@/os/input/shortcuts";
 import { WindowIdContext } from "@/os/window/useWindowVisible";
 import type { SkillsArgs } from "./index";
 import SkillsApp from "./SkillsApp";
+import { createStageLoop, type StageLoop } from "./stageLoop";
 
 // The component with an api of vi.fn()s and the real content. It renders
 // outside a Screen, as registry.test.ts does, and imports nothing from
@@ -14,6 +16,15 @@ import SkillsApp from "./SkillsApp";
 // stage loop asks for requestAnimationFrame), so a test steps the frames by
 // hand. jsdom has no layout, so every rectangle is zero and the stage's
 // pointer maths gives client pixels as stage units.
+//
+// createStageLoop is wrapped so a test can read the walls of the newest loop
+// (`loop().bounds()`), as BootSequence.test.tsx wraps buildBootScript.
+vi.mock("./stageLoop", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./stageLoop")>();
+  return { ...actual, createStageLoop: vi.fn(actual.createStageLoop) };
+});
+const loop = () =>
+  vi.mocked(createStageLoop).mock.results.at(-1)!.value as StageLoop;
 
 beforeEach(() => {
   vi.useFakeTimers({
@@ -49,7 +60,7 @@ function makeApi() {
       return () => {};
     }),
     bounds: vi.fn(() => ({ width: 1000, height: 580 })),
-    registerShortcut: vi.fn(() => () => {}),
+    registerShortcut: vi.fn<AppApi["registerShortcut"]>(() => () => {}),
   };
   const api = {
     ...mocks,
@@ -161,16 +172,15 @@ describe("SkillsApp", () => {
     for (const b of icons(container)) expect(b.tagName).toBe("BUTTON");
   });
 
-  it("shows the four practices in the footer as labels, not buttons", () => {
+  it("shows the four practices in the footer as toggle chips", () => {
     const { api } = makeApi();
     render(ui(api));
     expect(BEFORE.practiceNames).toHaveLength(4);
-    for (const name of BEFORE.practiceNames) {
-      const label = screen.getByText(name);
-      expect(label.tagName).toBe("SPAN");
-      expect(screen.queryByRole("button", { name })).toBeNull();
-    }
-    expect(screen.getByText("Practices")).toBeTruthy();
+    const group = screen.getByRole("group", { name: "Practices" });
+    const buttons = within(group).getAllByRole("button");
+    expect(buttons.map((b) => b.textContent)).toEqual(BEFORE.practiceNames);
+    for (const b of buttons)
+      expect(b.getAttribute("aria-pressed")).toBe("false");
   });
 
   it("lists what each tab lists", () => {
@@ -711,6 +721,9 @@ describe("SkillsApp", () => {
       const { container } = render(
         <MotionConfig reducedMotion="always">{ui(api)}</MotionConfig>,
       );
+      // The app opens in list view under reduced motion; the stage is the
+      // visitor's choice.
+      fireEvent.click(screen.getByRole("button", { name: "List view" }));
       expect(set(container).classList.contains("skills-set")).toBe(true);
       expect(set(container).classList.contains("skills-set-enter")).toBe(false);
     });
@@ -775,6 +788,337 @@ describe("SkillsApp", () => {
     });
   });
 
+  describe("the panel (#90)", () => {
+    const panel = (c: HTMLElement) =>
+      c.querySelector<HTMLElement>("[data-skill-panel]");
+    // The panel's own heading: the list view has a "Practices" h3 too.
+    const heading = () =>
+      within(screen.getByRole("complementary")).getByRole("heading", {
+        level: 3,
+      });
+    const practice = (name: string) =>
+      within(screen.getByRole("group", { name: "Practices" })).getByRole(
+        "button",
+        { name },
+      );
+    const AGILE = staticContent.skill("agile")!.name;
+    const OOP = staticContent.skill("oop")!.name;
+    // Past PANEL_MS (250 ms): 17 frames of 16 ms.
+    const settle = () => frames(17);
+    // The handler the newest registerShortcut call received.
+    const escape = (mocks: ReturnType<typeof makeApi>["mocks"]) => {
+      const [shortcut] = mocks.registerShortcut.mock.calls.at(-1) as [Shortcut];
+      act(() => {
+        shortcut.handler(new KeyboardEvent("keydown", { key: "Escape" }));
+      });
+    };
+
+    it("click opens the panel", () => {
+      const { api } = makeApi();
+      const { container } = render(ui(api));
+      expect(panel(container)).toBeNull();
+      click(icon(container, "python"));
+
+      const aside = panel(container)!;
+      expect(aside).not.toBeNull();
+      expect(heading().textContent).toBe("Python");
+      // The open icon names the panel; the others do not.
+      expect(icon(container, "python").getAttribute("aria-expanded")).toBe(
+        "true",
+      );
+      expect(icon(container, "python").getAttribute("aria-controls")).toBe(
+        aside.id,
+      );
+      expect(aside.id).not.toBe("");
+      for (const b of icons(container)) {
+        if (b.dataset.skillId === "python") continue;
+        expect(b.getAttribute("aria-expanded")).toBe("false");
+        expect(b.hasAttribute("aria-controls")).toBe(false);
+      }
+      settle();
+      expect(loop().bounds().width).toBe(660);
+    });
+
+    it("args open the panel", () => {
+      const { api } = makeApi();
+      const { container } = render(ui(api, { item: "python" }));
+      expect(panel(container)).not.toBeNull();
+      expect(heading().textContent).toBe("Python");
+      settle();
+      expect(loop().bounds().width).toBe(660);
+    });
+
+    it("lets a Used in chip open the entry in Projects", () => {
+      const { api, mocks } = makeApi();
+      render(ui(api, { item: "python" }));
+      fireEvent.click(
+        screen.getByRole("button", { name: "Bash Terminal Recreation in C" }),
+      );
+      expect(mocks.openApp).toHaveBeenCalledTimes(1);
+      expect(mocks.openApp).toHaveBeenCalledWith("projects", {
+        item: "bash-shell",
+      });
+    });
+
+    it("slides the wall with no React commit", () => {
+      const { api } = makeApi();
+      const onRender = vi.fn();
+      const { container } = render(
+        <Profiler id="skills" onRender={onRender}>
+          {ui(api)}
+        </Profiler>,
+      );
+      click(icon(container, "python"));
+      frames(2);
+      // Part way in: the wall is moving.
+      expect(loop().bounds().width).toBeGreaterThan(660);
+      expect(loop().bounds().width).toBeLessThan(1000);
+      onRender.mockClear();
+      frames(30);
+      expect(onRender).not.toHaveBeenCalled();
+      expect(loop().bounds().width).toBe(660);
+    });
+
+    it("another skill keeps the wall and swaps the text", () => {
+      const { api } = makeApi();
+      const { container } = render(ui(api));
+      click(icon(container, "python"));
+      settle();
+      click(icon(container, "java"));
+      expect(heading().textContent).toBe("Java");
+      expect(selected(container)).toEqual(["java"]);
+      settle();
+      expect(loop().bounds().width).toBe(660);
+    });
+
+    it("practices select, keep the tab, and toggle", () => {
+      const { api } = makeApi();
+      const { container } = render(ui(api));
+      press("Tools");
+      fireEvent.click(practice(AGILE));
+      expect(panel(container)).not.toBeNull();
+      expect(heading().textContent).toBe(AGILE);
+      expect(practice(AGILE).getAttribute("aria-pressed")).toBe("true");
+      expect(practice(OOP).getAttribute("aria-pressed")).toBe("false");
+      expect(pressed().Tools).toBe("true");
+      // A practice has no icon to select.
+      expect(selected(container)).toEqual([]);
+
+      // A practice survives a tab switch: it is visible under every tab.
+      press("Languages");
+      expect(heading().textContent).toBe(AGILE);
+      expect(practice(AGILE).getAttribute("aria-pressed")).toBe("true");
+      expect(pressed().Languages).toBe("true");
+
+      // Pressing it again closes the panel.
+      fireEvent.click(practice(AGILE));
+      expect(panel(container)).toBeNull();
+      expect(practice(AGILE).getAttribute("aria-pressed")).toBe("false");
+    });
+
+    it("opens a practice from the args and keeps the tab", () => {
+      const { api } = makeApi();
+      const { container } = render(ui(api, { item: "oop", tab: "tool" }));
+      expect(heading().textContent).toBe(OOP);
+      expect(pressed().Tools).toBe("true");
+      expect(practice(OOP).getAttribute("aria-pressed")).toBe("true");
+      expect(panel(container)).not.toBeNull();
+    });
+
+    it("closing clears the selection, unmounts the panel and moves the wall back", () => {
+      const { api } = makeApi();
+      const { container } = render(ui(api));
+      click(icon(container, "python"));
+      settle();
+      expect(loop().bounds().width).toBe(660);
+      const close = screen.getByRole("button", { name: "Close panel" });
+      focus(close);
+      fireEvent.click(close);
+
+      expect(panel(container)).toBeNull();
+      expect(selected(container)).toEqual([]);
+      for (const b of icons(container)) {
+        expect(b.getAttribute("aria-expanded")).toBe("false");
+        expect(b.hasAttribute("aria-controls")).toBe(false);
+      }
+      // Focus was in the panel, so it goes back to the icon that opened it.
+      expect(document.activeElement).toBe(icon(container, "python"));
+      settle();
+      expect(loop().bounds().width).toBe(1000);
+    });
+
+    it("closing leaves the focus alone when it was not in the panel", () => {
+      const { api } = makeApi();
+      const { container } = render(ui(api));
+      click(icon(container, "python"));
+      focus(icon(container, "git"));
+      fireEvent.click(screen.getByRole("button", { name: "Close panel" }));
+      expect(panel(container)).toBeNull();
+      expect(document.activeElement).toBe(icon(container, "git"));
+    });
+
+    it("Escape closes, through the handler the panel registered", () => {
+      const { api, mocks } = makeApi();
+      const { container } = render(ui(api));
+      expect(mocks.registerShortcut).not.toHaveBeenCalled();
+      click(icon(container, "python"));
+      expect(mocks.registerShortcut).toHaveBeenCalledTimes(1);
+      focus(screen.getByRole("button", { name: "Close panel" }));
+      escape(mocks);
+      expect(panel(container)).toBeNull();
+      expect(selected(container)).toEqual([]);
+      expect(document.activeElement).toBe(icon(container, "python"));
+    });
+
+    it("returns focus to the practice chip that opened the panel", () => {
+      const { api, mocks } = makeApi();
+      const { container } = render(ui(api));
+      fireEvent.click(practice(AGILE));
+      focus(screen.getByRole("button", { name: "Close panel" }));
+      escape(mocks);
+      expect(panel(container)).toBeNull();
+      expect(document.activeElement).toBe(practice(AGILE));
+    });
+
+    describe("the list view", () => {
+      const toggle = () => screen.getByRole("button", { name: "List view" });
+      const stage = (c: HTMLElement) => c.querySelector("[data-skills-stage]");
+
+      it("replaces the stage, and keeps the tab and the selection", () => {
+        const { api } = makeApi();
+        const { container } = render(ui(api));
+        expect(toggle().getAttribute("aria-pressed")).toBe("false");
+        press("Tools");
+        click(icon(container, "git"));
+        expect(vi.getTimerCount()).toBe(1);
+
+        fireEvent.click(toggle());
+        expect(toggle().getAttribute("aria-pressed")).toBe("true");
+        expect(stage(container)).toBeNull();
+        // The loop is gone with the stage: no frame is pending.
+        expect(vi.getTimerCount()).toBe(0);
+        expect(pressed().Tools).toBe("true");
+        const card = (id: string) =>
+          container.querySelector<HTMLElement>(`[data-skill-card="${id}"]`)!;
+        expect(card("git").hasAttribute("data-selected")).toBe(true);
+        expect(panel(container)).not.toBeNull();
+        expect(heading().textContent).toBe("Git");
+        expect(
+          container.querySelector<HTMLElement>("[data-skill-list]")!.style
+            .paddingRight,
+        ).toBe("356px");
+        // The footer is replaced by the list's own Practices section.
+        expect(screen.queryByRole("group", { name: "Practices" })).toBeNull();
+        expect(
+          container.querySelectorAll(
+            "[data-skill-practices] [data-skill-card]",
+          ),
+        ).toHaveLength(4);
+        expect(
+          container.querySelectorAll("[data-skill-cards] [data-skill-card]"),
+        ).toHaveLength(17);
+
+        fireEvent.click(toggle());
+        expect(toggle().getAttribute("aria-pressed")).toBe("false");
+        expect(stage(container)).not.toBeNull();
+        expect(selected(container)).toEqual(["git"]);
+        expect(vi.getTimerCount()).toBe(1);
+        expect(screen.getByRole("group", { name: "Practices" })).toBeTruthy();
+      });
+
+      it("opens the panel from a card, and from a practice card", () => {
+        const { api } = makeApi();
+        const { container } = render(ui(api));
+        fireEvent.click(toggle());
+        fireEvent.click(
+          container.querySelector<HTMLElement>('[data-skill-card="java"]')!,
+        );
+        expect(heading().textContent).toBe("Java");
+        fireEvent.click(
+          container.querySelector<HTMLElement>('[data-skill-card="agile"]')!,
+        );
+        expect(heading().textContent).toBe(AGILE);
+        // A card does not toggle: the selected one stays open.
+        fireEvent.click(
+          container.querySelector<HTMLElement>('[data-skill-card="agile"]')!,
+        );
+        expect(panel(container)).not.toBeNull();
+      });
+
+      it("returns focus to the card that opened the panel", () => {
+        const { api, mocks } = makeApi();
+        const { container } = render(ui(api));
+        fireEvent.click(toggle());
+        const card = container.querySelector<HTMLElement>(
+          '[data-skill-card="java"]',
+        )!;
+        fireEvent.click(card);
+        focus(screen.getByRole("button", { name: "Close panel" }));
+        escape(mocks);
+        expect(document.activeElement).toBe(card);
+      });
+
+      it("defaults to the list under reduced motion, and the choice wins", () => {
+        const { api } = makeApi();
+        const view = render(
+          <MotionConfig reducedMotion="always">{ui(api)}</MotionConfig>,
+        );
+        expect(toggle().getAttribute("aria-pressed")).toBe("true");
+        expect(stage(view.container)).toBeNull();
+        expect(
+          view.container.querySelector("[data-skill-list]"),
+        ).not.toBeNull();
+
+        fireEvent.click(toggle());
+        expect(toggle().getAttribute("aria-pressed")).toBe("false");
+        expect(stage(view.container)).not.toBeNull();
+        // The choice holds across a render.
+        view.rerender(
+          <MotionConfig reducedMotion="always">{ui(api)}</MotionConfig>,
+        );
+        expect(stage(view.container)).not.toBeNull();
+        view.unmount();
+
+        const floating = render(
+          <MotionConfig reducedMotion="never">{ui(api)}</MotionConfig>,
+        );
+        expect(toggle().getAttribute("aria-pressed")).toBe("false");
+        expect(stage(floating.container)).not.toBeNull();
+        fireEvent.click(toggle());
+        expect(stage(floating.container)).toBeNull();
+      });
+
+      it("puts the wall in at once under reduced motion", () => {
+        const { api } = makeApi();
+        const { container } = render(
+          <MotionConfig reducedMotion="always">{ui(api)}</MotionConfig>,
+        );
+        fireEvent.click(toggle());
+        click(icon(container, "python"));
+        // No frame has run.
+        expect(loop().bounds().width).toBe(660);
+        const aside = panel(container)!;
+        expect(aside.classList.contains("skills-panel-enter")).toBe(false);
+      });
+    });
+
+    it("covers the stage and keeps the wall out in the fullscreen mode", () => {
+      vi.stubGlobal("matchMedia", () => ({
+        matches: true,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+      }));
+      const { api } = makeApi();
+      const { container } = render(ui(api));
+      click(icon(container, "python"));
+      expect(panel(container)!.style.width).toBe("100%");
+      settle();
+      expect(loop().bounds().width).toBe(1000);
+    });
+  });
+
   it("never writes its args, its title or the URL", () => {
     const { api, mocks } = makeApi();
     const { container } = render(ui(api, { item: "git", tab: "tool" }));
@@ -795,9 +1139,13 @@ describe("SkillsApp", () => {
       "setTitle",
       "openApp",
       "notify",
-      "registerShortcut",
     ] as const) {
       expect(mocks[name], name).not.toHaveBeenCalled();
+    }
+    // The only shortcut it registers is the panel's Escape.
+    expect(mocks.registerShortcut).toHaveBeenCalled();
+    for (const [shortcut] of mocks.registerShortcut.mock.calls) {
+      expect(shortcut.combo).toBe("Escape");
     }
   });
 });
