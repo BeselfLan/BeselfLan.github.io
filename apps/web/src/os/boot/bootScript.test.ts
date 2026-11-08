@@ -3,7 +3,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { content, type BootGroups, type Entry } from "@beself/content";
 import { staticContent } from "@/content/static";
 import {
+  bootLogDuration,
   buildBootScript,
+  HEADER_PAUSE_MS,
+  LOG_BUDGET_MS,
+  LOG_MAX_MS,
   type BootGroup,
   type BootLine,
   type BootSource,
@@ -369,5 +373,172 @@ describe("boot script year", () => {
     expect(
       lineFor(buildBootScript(staticContent, { year: 2026 }), "utm").text,
     ).toMatch(/^Enrolled /);
+  });
+});
+
+/** A small seeded generator (mulberry32), so a run can be repeated. */
+function mulberry32(seed: number): () => number {
+  let a = seed;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** 0, 1, 0, 1, ... so the jitter differs from one line to the next. */
+function alternating(): () => number {
+  let n = 0;
+  return () => n++ % 2;
+}
+
+function withManyProjects(count: number): BootSource {
+  const base = entry("bash-shell");
+  return withGroups((g) => ({
+    projects: [
+      ...g.projects,
+      ...Array.from({ length: count }, (_, i) => ({ ...base, id: `p-${i}` })),
+    ],
+  }));
+}
+
+describe("boot script timing", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("lasts 2200 to 2600 ms for today's content", () => {
+    const generators = {
+      "all zero": () => 0,
+      "nearly one": () => 0.999999,
+      seeded: mulberry32(1),
+    };
+    for (const [name, random] of Object.entries(generators)) {
+      const total = bootLogDuration(
+        buildBootScript(staticContent, { random, year: 2026 }),
+      );
+      expect(total, name).toBeGreaterThanOrEqual(2200);
+      expect(total, name).toBeLessThanOrEqual(2600);
+      // The cap does not bite today: the whole budget is spent.
+      expect(total, name).toBe(LOG_BUDGET_MS);
+    }
+  });
+
+  it("gives a header line its pause", () => {
+    // With no jitter to speak of, a line takes about 20 ms today.
+    const script = buildBootScript(staticContent, OPTIONS);
+    const headers = script.filter((l) => l.status === "header");
+    const others = script.filter((l) => l.status !== "header");
+    expect(headers).toHaveLength(7);
+    for (const l of others) expect(l.delayMs).toBeLessThanOrEqual(21);
+    for (const l of headers) {
+      expect(l.delayMs, l.text).toBeGreaterThanOrEqual(HEADER_PAUSE_MS + 19);
+    }
+  });
+
+  it("moves time between lines but keeps the total", () => {
+    const jittered = buildBootScript(staticContent, {
+      random: alternating(),
+      year: 2026,
+    });
+    const flat = buildBootScript(staticContent, OPTIONS);
+
+    const delays = jittered
+      .filter((l) => l.status !== "header")
+      .map((l) => l.delayMs);
+    // Not all equal, and by more than rounding.
+    expect(Math.max(...delays) - Math.min(...delays)).toBeGreaterThanOrEqual(8);
+    expect(
+      Math.abs(bootLogDuration(jittered) - bootLogDuration(flat)),
+    ).toBeLessThanOrEqual(1);
+  });
+
+  it("calls random once per line, in order", () => {
+    const calls: number[] = [];
+    const script = buildBootScript(staticContent, {
+      random: () => {
+        calls.push(calls.length);
+        return 0.5;
+      },
+      year: 2026,
+    });
+    expect(script).toHaveLength(57);
+    expect(calls).toHaveLength(57);
+
+    // The first line's jitter is the first value, so the order is the line order.
+    const first = buildBootScript(staticContent, {
+      random: (() => {
+        let n = 0;
+        return () => (n++ === 0 ? 1 : 0.5);
+      })(),
+      year: 2026,
+    });
+    expect(first[0].delayMs).toBeGreaterThan(
+      buildBootScript(staticContent, OPTIONS)[0].delayMs,
+    );
+  });
+
+  it("holds the cap for any amount of content", () => {
+    const script = buildBootScript(withManyProjects(300), {
+      random: mulberry32(7),
+      year: 2026,
+    });
+    expect(script.filter((l) => l.ids[0]?.startsWith("p-"))).toHaveLength(300);
+    // The 18 ms floor alone would give about 7.5 s.
+    expect(bootLogDuration(script)).toBeLessThanOrEqual(LOG_MAX_MS);
+    expect(bootLogDuration(script)).toBeGreaterThan(LOG_BUDGET_MS);
+    for (const l of script) expect(l.delayMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("makes the delays whole and adds them up", () => {
+    const sources = [staticContent, withManyProjects(300)];
+    for (const source of sources) {
+      for (const random of [() => 0, alternating(), mulberry32(3)]) {
+        const script = buildBootScript(source, { random, year: 2026 });
+        for (const l of script) {
+          expect(Number.isInteger(l.delayMs), l.text).toBe(true);
+          expect(l.delayMs, l.text).toBeGreaterThanOrEqual(0);
+        }
+        const sum = script.reduce((total, l) => total + l.delayMs, 0);
+        expect(sum).toBe(bootLogDuration(script));
+        expect(sum).toBeLessThanOrEqual(LOG_MAX_MS);
+      }
+    }
+  });
+
+  it("is zero for a log with no lines", () => {
+    expect(bootLogDuration([])).toBe(0);
+  });
+});
+
+describe("boot script randomness and clock", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it("calls neither Math.random nor the clock outside the call", async () => {
+    vi.resetModules();
+    const random = vi.spyOn(Math, "random");
+    const now = vi.spyOn(Date, "now");
+    const date = vi.spyOn(globalThis, "Date");
+
+    const fresh = await import("./bootScript");
+    expect(random).not.toHaveBeenCalled();
+    expect(now).not.toHaveBeenCalled();
+    expect(date).not.toHaveBeenCalled();
+
+    // With both options given, the call needs neither default.
+    fresh.buildBootScript(staticContent, { random: () => 0.5, year: 2026 });
+    expect(random).not.toHaveBeenCalled();
+    expect(now).not.toHaveBeenCalled();
+    expect(date).not.toHaveBeenCalled();
+  });
+
+  it("uses Math.random for the jitter when none is given", () => {
+    const random = vi.spyOn(Math, "random").mockReturnValue(0.5);
+    buildBootScript(staticContent, { year: 2026 });
+    expect(random).toHaveBeenCalledTimes(57);
   });
 });
