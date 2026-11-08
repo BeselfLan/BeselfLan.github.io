@@ -1,0 +1,247 @@
+/*
+ * The laptop's art and its settled geometry (plan 3.1, #75). A global
+ * stylesheet with boot-laptop names, for the reason boot.css gives:
+ * next.config.ts sends every *.css file through one rule with `as: "*.css"`,
+ * so a .module.css comes out unscoped with an empty class map. Override: a
+ * module, and styles.* in Laptop.tsx, once that rule keeps scoping.
+ *
+ * Motion animates the lid and the camera, so the only keyframes are the power
+ * button's fade. Whatever depends on the stage (perspective, preserve-3d, the
+ * bezel padding) is inline in Laptop.tsx, so a jsdom test can read it; this
+ * file is the static art and the layout.
+ *
+ * The camera and the lid must never get overflow, opacity, filter or
+ * clip-path: each one flattens preserve-3d. The desk clips instead.
+ *
+ * The hideable parts (deck, lid back, lip, webcam) have no display rule here,
+ * so the hidden attribute decides.
+ */
+
+.boot-laptop {
+  --boot-laptop-margin: 2vmin;
+  --boot-laptop-bezel: clamp(8px, 1.4vmin, 20px);
+  --boot-laptop-lip: clamp(6px, 1vmin, 12px);
+  /* A 16:10 slot, so Screen's 1440x900 box fills it with no letterbox. */
+  --boot-laptop-screen-w: min(
+    100vw - 2 * var(--boot-laptop-margin) - 2 * var(--boot-laptop-bezel),
+    (
+        100dvh - 2 * var(--boot-laptop-margin) - var(--boot-laptop-lip) - 2 *
+          var(--boot-laptop-bezel)
+      ) *
+      1.6
+  );
+  --boot-laptop-screen-h: calc(var(--boot-laptop-screen-w) / 1.6);
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(
+    ellipse at 50% 42%,
+    #3b2533 0%,
+    #170d14 55%,
+    #0b0609 100%
+  );
+}
+
+/* Turns about its top edge, so the closed laptop lands near the middle. */
+.boot-laptop-camera {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transform-origin: 50% 0%;
+}
+
+/* The hinge is the bottom edge. */
+.boot-laptop-lid {
+  position: relative;
+  transform-origin: 50% 100%;
+}
+
+/* Turned about Y, so it faces away from the bezel: the closed lid's top. */
+.boot-laptop-lid-back {
+  position: absolute;
+  inset: 0;
+  transform: rotateY(180deg);
+  backface-visibility: hidden;
+  border-radius: 14px 14px 4px 4px;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      rgb(255 255 255 / 0.03) 0 1px,
+      transparent 1px 3px
+    ),
+    linear-gradient(160deg, #3a3a42 0%, #25252b 55%, #1a1a1f 100%);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.08);
+}
+
+/* Upright for someone looking at the closed laptop from the front. */
+.boot-laptop-wordmark {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: rotate(180deg);
+  font-family: var(--font-ui), sans-serif;
+  font-size: clamp(14px, 4vmin, 40px);
+  letter-spacing: 0.3em;
+  color: rgb(255 255 255 / 0.55);
+  text-shadow: 0 0 18px rgb(233 84 32 / 0.55);
+}
+
+/* Faces down while the lid is shut; only the back shows from above. */
+.boot-laptop-bezel {
+  position: relative;
+  background: #0c0c0c;
+  border-radius: 14px 14px 4px 4px;
+  backface-visibility: hidden;
+  /* A pale edge, so the bezel reads against the dark desk. */
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.1);
+}
+
+.boot-laptop-webcam {
+  position: absolute;
+  top: calc(var(--boot-laptop-bezel) / 2 - 3px);
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  margin-left: -3px;
+  border-radius: 50%;
+  background: #1f2a33;
+  box-shadow: inset 0 0 0 1px #3a4a57;
+}
+
+.boot-laptop-screen {
+  position: relative;
+  width: var(--boot-laptop-screen-w);
+  height: var(--boot-laptop-screen-h);
+  margin: 0 auto;
+}
+
+/* The thin front edge of the base, under the bezel. */
+.boot-laptop-lip {
+  width: 106%;
+  height: var(--boot-laptop-lip);
+  border-radius: 0 0 12px 12px;
+  background: linear-gradient(180deg, #d4d4da 0%, #9a9aa3 60%, #6d6d76 100%);
+}
+
+/* Lies toward the viewer from the hinge, the size of the lid. */
+.boot-laptop-deck {
+  position: absolute;
+  left: 0;
+  top: calc(100% - var(--boot-laptop-lip));
+  width: 100%;
+  height: calc(var(--boot-laptop-screen-h) + 2 * var(--boot-laptop-bezel));
+  transform-origin: top center;
+  transform: translateY(2px) rotateX(90deg);
+  border-radius: 4px 4px 14px 14px;
+  background: linear-gradient(180deg, #b9b9c1 0%, #a2a2ab 100%);
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.2);
+}
+
+/* The keys: two line grids crossing. */
+.boot-laptop-deck::before {
+  content: "";
+  position: absolute;
+  inset: 5% 4% 38% 4%;
+  border-radius: 6px;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      transparent 0 calc(100% / 14 - 3px),
+      #55555d calc(100% / 14 - 3px) calc(100% / 14)
+    ),
+    repeating-linear-gradient(
+      180deg,
+      transparent 0 calc(100% / 5 - 3px),
+      #55555d calc(100% / 5 - 3px) calc(100% / 5)
+    ),
+    #2b2b31;
+}
+
+/* The trackpad. */
+.boot-laptop-deck::after {
+  content: "";
+  position: absolute;
+  left: 34%;
+  right: 34%;
+  bottom: 6%;
+  height: 24%;
+  border-radius: 8px;
+  background: #8e8e97;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.25);
+}
+
+/* Fullscreen (D4): only the screen, filling the viewport. */
+.boot-laptop[data-mode="fullscreen"] .boot-laptop-camera {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.boot-laptop[data-mode="fullscreen"] .boot-laptop-lid,
+.boot-laptop[data-mode="fullscreen"] .boot-laptop-bezel,
+.boot-laptop[data-mode="fullscreen"] .boot-laptop-screen {
+  width: 100%;
+  height: 100%;
+}
+.boot-laptop[data-mode="fullscreen"] .boot-laptop-bezel {
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+
+/*
+ * The "Power on" button after Power Off (#14): a pill on the desk in front of
+ * the closed laptop, outside the camera so its click target is plain 2D. It
+ * fades in after the lid has closed; the delay is inline (animationDelay) and
+ * the keyframes animate opacity only, because transform positions it.
+ */
+@keyframes boot-laptop-power-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.boot-laptop-power {
+  position: absolute;
+  left: 50%;
+  bottom: max(24px, 6vh);
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px 8px 12px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.08);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.18);
+  color: var(--os-panel-fg);
+  font:
+    14px var(--font-ui),
+    sans-serif;
+  cursor: pointer;
+  animation: boot-laptop-power-in 200ms ease-out both;
+}
+
+.boot-laptop-power:hover {
+  background: rgb(255 255 255 / 0.14);
+}
+
+.boot-laptop-power:focus-visible {
+  outline: 2px solid var(--os-orange);
+  outline-offset: 3px;
+}
+
+.boot-laptop-power-glyph {
+  color: var(--os-orange);
+}
+
+/* Fullscreen (D4): no laptop, so the button sits in the middle of the screen. */
+.boot-laptop[data-mode="fullscreen"] .boot-laptop-power {
+  bottom: 50%;
+  transform: translate(-50%, 50%);
+}
