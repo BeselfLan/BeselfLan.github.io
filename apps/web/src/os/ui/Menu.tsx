@@ -3,8 +3,8 @@
 import { useEffect, useRef, type KeyboardEvent } from "react";
 
 /**
- * One row of a menu. A separator is a rule, not a choice. The context menu
- * and `AppDefinition.menu` use this type.
+ * One row of a menu. A separator is a rule, not a choice. Callers import this
+ * type for their rows.
  */
 export type MenuItem =
   | {
@@ -103,7 +103,7 @@ export function Menu({
               onClose();
               item.onSelect();
             }}
-            className="rounded-os-sm px-3 py-1.5 text-left text-sm outline-none hover:bg-white/10 focus:bg-white/10 disabled:pointer-events-none disabled:opacity-50"
+            className="rounded-os-sm px-3 py-1.5 text-left text-sm hover:bg-white/10 focus:bg-white/10 focus:outline-2 focus:-outline-offset-2 focus:outline-os-accent disabled:pointer-events-none disabled:opacity-50"
           >
             {item.label}
           </button>
