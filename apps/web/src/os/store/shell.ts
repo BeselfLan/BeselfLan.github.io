@@ -1,12 +1,14 @@
+import type { MenuItem } from "../ui/Menu";
 import type { OSApi } from "./index";
 
 export type Popover = "power" | "calendar" | null;
 
 export interface ContextMenuState {
+  /** Client px from the pointer event (plan 3.4): Popover converts them itself. */
   x: number;
+  /** Client px, as `x`. */
   y: number;
-  // Narrowed to MenuItem[] by #10.
-  items: readonly unknown[];
+  items: readonly MenuItem[];
 }
 
 export interface ShellState {
@@ -40,7 +42,8 @@ export function createShellActions(api: OSApi) {
         s.shell.openPopover = p;
       });
     },
-    openContextMenu(x: number, y: number, items: readonly unknown[]): void {
+    /** `x` and `y` are client px. Callers must not mutate `items` afterwards. */
+    openContextMenu(x: number, y: number, items: readonly MenuItem[]): void {
       api.setState((s) => {
         // The array is copied, but immer still deep-freezes the item objects
         // the caller passed in, so callers must not mutate them afterwards.

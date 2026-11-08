@@ -20,7 +20,7 @@ export function Chip({ selected, onClick, className, children }: ChipProps) {
 
   if (onClick === undefined && selected === undefined) {
     return (
-      <span className={`${SHAPE} bg-white/10 text-os-panel-fg${extra}`}>
+      <span className={`${SHAPE} bg-white/10 text-os-panel-fg ${extra}`}>
         {children}
       </span>
     );
@@ -34,7 +34,7 @@ export function Chip({ selected, onClick, className, children }: ChipProps) {
       type="button"
       aria-pressed={selected}
       onClick={onClick}
-      className={`${SHAPE} ${tone} outline-offset-2 focus-visible:outline-2 focus-visible:outline-os-accent${extra}`}
+      className={`${SHAPE} ${tone} outline-offset-2 focus-visible:outline-2 focus-visible:outline-os-accent ${extra}`}
     >
       {children}
     </button>

@@ -81,7 +81,7 @@ export function Menu({
       role="menu"
       aria-label={ariaLabel}
       onKeyDown={onKeyDown}
-      className={`flex min-w-40 flex-col p-1${className ? ` ${className}` : ""}`}
+      className={`flex min-w-40 flex-col p-1 ${className ? ` ${className}` : ""}`}
     >
       {items.map((item) =>
         item.separator ? (
