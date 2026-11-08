@@ -45,7 +45,7 @@ describe("createBody", () => {
       expect(
         () => createBody({ id: "zed", x: 0, y: 0, r: 28, ...over }),
         JSON.stringify(over),
-      ).toThrow(/zed|id/);
+      ).toThrow(/"zed"/);
     }
     expect(() => createBody({ id: "", x: 0, y: 0, r: 28 })).toThrow();
   });

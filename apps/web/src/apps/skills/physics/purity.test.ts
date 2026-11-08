@@ -9,8 +9,9 @@ import { describe, expect, it } from "vitest";
 // test, can be replaced by matter.js, and draws nothing at import (plan 9).
 
 const dir = fileURLToPath(new URL(".", import.meta.url));
+// .tsx too, so a component dropped into this folder is scanned as well.
 const files = readdirSync(dir).filter(
-  (f) => f.endsWith(".ts") && !f.endsWith(".test.ts"),
+  (f) => /\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f),
 );
 
 const COMMENTS = /\/\*[\s\S]*?\*\/|\/\/[^\n]*/g;
@@ -41,8 +42,9 @@ describe("the physics folder", () => {
         ...text.matchAll(/\bimport\s*["']([^"']+)["']/g),
       ].map((m) => m[1]);
       for (const specifier of specifiers) {
+        // "./name" only: "./../../os/apps/types" starts with "./" too.
         expect(
-          specifier.startsWith("./"),
+          /^\.\/[\w-]+$/.test(specifier),
           `${file} imports "${specifier}"`,
         ).toBe(true);
       }

@@ -239,7 +239,9 @@ describe("the rest of the behaviour", () => {
     const b = find(w, "b");
     expect(find(w, "a").x).toBeCloseTo(470, 9);
     expect(b.x).toBeGreaterThan(500);
-    expect(b.vx).toBeGreaterThan(0);
+    // b is hit by a body dragged at about 4200 units/s, so it leaves fast. Its
+    // idle drift alone would make vx positive about half the time.
+    expect(b.vx).toBeGreaterThan(1000);
     // Without the clamp at the end of a substep b would leave at about 8190.
     expect(speed(b)).toBeLessThanOrEqual(2500 + 1e-9);
 
@@ -402,11 +404,17 @@ describe("the rest of the behaviour", () => {
     expect(w.bodies()).toBe(list);
     expect(list.map((b) => b.mass)).toEqual([R * R, R * R, R * R]);
 
-    // Removal keeps the order of the rest, and the id can be added again.
+    // Removal keeps the order of the rest and the same array, and the id can
+    // be added again. Removing the first body tells a splice from a swap-remove.
     w.remove("b");
+    expect(w.bodies()).toBe(list);
     expect(w.bodies().map((b) => b.id)).toEqual(["a", "c"]);
     w.add({ id: "b", x: 300, y: 100, r: R });
+    expect(w.bodies()).toBe(list);
     expect(w.bodies().map((b) => b.id)).toEqual(["a", "c", "b"]);
+    w.remove("a");
+    expect(w.bodies()).toBe(list);
+    expect(w.bodies().map((b) => b.id)).toEqual(["c", "b"]);
   });
 
   it("removing a grabbed body is safe", () => {
