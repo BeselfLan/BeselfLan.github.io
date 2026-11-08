@@ -25,7 +25,8 @@ import { createRing } from "./ring";
 // This file does not use `useScreen()`, so `registry.test.ts` can render it
 // outside a Screen. Reduced motion comes from `useReducedMotionConfig()`:
 // outside any `MotionConfig` it is false. The arrow keys, the wheel and the
-// drag are #95's, and the detail panel is #18's.
+// drag are `ring.ts`'s, bound on the stage when the ring attaches, so the JSX
+// has no handler for them. The detail panel is #18's.
 
 export interface CarouselProps {
   /**
@@ -75,12 +76,14 @@ function CarouselRing({
   );
   const front = useSyncExternalStore(ring.subscribe, ring.front, ring.front);
   const ringEl = useRef<HTMLDivElement>(null);
+  const stageEl = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => ring.setReduced(reduced), [ring, reduced]);
   // In a layout effect, so the first pose is on screen before the first paint.
   useLayoutEffect(() => {
     const el = ringEl.current;
-    return el ? ring.attach(el) : undefined;
+    const stage = stageEl.current;
+    return el && stage ? ring.attach(el, stage) : undefined;
   }, [ring]);
   useEffect(() => ring.setPaused(paused), [ring, paused]);
 
@@ -95,6 +98,7 @@ function CarouselRing({
     >
       <div
         data-carousel=""
+        ref={stageEl}
         className="projects-stage"
         style={{
           perspective: CAROUSEL.perspective,

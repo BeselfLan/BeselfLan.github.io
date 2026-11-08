@@ -1,4 +1,4 @@
-import { act, render } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { staticContent } from "@/content/static";
 import { Screen } from "@/os/screen/Screen";
@@ -67,9 +67,34 @@ describe("Desktop", () => {
     expect(root.className).not.toMatch(/(^|\s)(isolate|-?z-\S+)/);
   });
 
-  it("keeps the app launcher", () => {
+  it("the stub launcher is gone", () => {
     mount();
-    expect(q('nav[aria-label="Apps"]')).not.toBeNull();
+    expect(q('nav[aria-label="Apps"]')).toBeNull();
+    expect(screen.queryAllByRole("button", { name: /^Open / })).toHaveLength(0);
+  });
+
+  it("the dock paints above the windows", () => {
+    mount();
+    expect(document.querySelectorAll("[data-dock]")).toHaveLength(1);
+    const layer = q('[data-testid="layer"]')!;
+    const dock = q("[data-dock]")!;
+    // The layer is isolate: a dock placed before it would paint under the windows.
+    expect(before(layer, dock)).toBe(true);
+    expect(before(q("[data-topbar]")!, dock)).toBe(true);
+    // It is in the root with the rest, not nested in the layer.
+    expect(layer.contains(dock)).toBe(false);
+    expect(dock.parentElement).toBe(layer.parentElement);
+  });
+
+  it("opens the context menu from the store", () => {
+    mount();
+    expect(screen.queryByRole("menu")).toBeNull();
+    act(() =>
+      os.shell.openContextMenu(100, 50, [
+        { id: "x", label: "Something", onSelect: () => {} },
+      ]),
+    );
+    expect(screen.getByRole("menu")).not.toBeNull();
   });
 
   describe("the signature", () => {
