@@ -704,7 +704,111 @@ describe("reduced motion", () => {
   });
 });
 
+const shutdownLines = () =>
+  [...document.querySelectorAll<HTMLElement>("[data-shutdown-line]")].map(
+    (el) => ({ text: el.textContent, delay: el.style.animationDelay }),
+  );
+
+describe("the shutdown and restart screens", () => {
+  it("Power Off prints three lines over the 600 ms stage", () => {
+    render(<BootSequence />);
+    toDesktop();
+    act(() => os.boot.shutdown());
+    expect(stage()).toBe("shutting-down");
+    expect(shutdownLines()).toEqual([
+      { text: "[  OK  ] Stopped apps", delay: "0ms" },
+      { text: "[  OK  ] Unmounted /home/beself", delay: "200ms" },
+      { text: "reboot: Power down", delay: "400ms" },
+    ]);
+    // Decoration: the one live region stays the only one.
+    expect(
+      document
+        .querySelector("[data-shutdown-log]")
+        ?.getAttribute("aria-hidden"),
+    ).toBe("true");
+    expect(liveRegions()).toHaveLength(1);
+
+    walk(599);
+    expect(stage()).toBe("shutting-down");
+    walk(1);
+    expect(stage()).toBe("off");
+    expect(shutdownLines()).toHaveLength(0);
+  });
+
+  it("Restart ends in the reboot line, then plays the full boot", () => {
+    render(<BootSequence />);
+    toDesktop();
+    act(() => os.boot.restart());
+    expect(stage()).toBe("restarting");
+    const lines = shutdownLines();
+    expect(lines.map((l) => l.text)).toEqual([
+      "[  OK  ] Stopped apps",
+      "[  OK  ] Unmounted /home/beself",
+      "reboot: Restarting system",
+    ]);
+    expect(lines.map((l) => l.delay)).toEqual(["0ms", "200ms", "400ms"]);
+    walk(600);
+    expect(stage()).toBe("power-on");
+    expect(shutdownLines()).toHaveLength(0);
+  });
+
+  it("the shutdown covers the desktop at once, with no fade", () => {
+    render(<BootSequence />);
+    toDesktop();
+    act(() => os.boot.shutdown());
+    expect(root()?.getAttribute("data-boot-stage")).toBe("shutting-down");
+    expect(root()!.className).not.toContain("boot-fade-out");
+    expect(root()!.style.pointerEvents).not.toBe("none");
+  });
+});
+
 describe("the login stage", () => {
+  const toLogin = () => {
+    render(<BootSequence />);
+    toBootLog();
+    walk(boot().bootLogMs);
+    expect(stage()).toBe("login");
+  };
+
+  it("with showLogin on, login waits for a click", () => {
+    os.settings.update({ showLogin: true });
+    toLogin();
+    walk(60_000);
+    expect(stage()).toBe("login");
+    press.key();
+    press.pointer();
+    fireEvent.keyDown(window, { key: "Enter" });
+    expect(stage()).toBe("login");
+
+    const card = screen.getByRole("button", { name: /Click to log in$/ });
+    expect(document.activeElement).toBe(card);
+    expect(skipButton()).toBeNull();
+
+    fireEvent.click(card);
+    expect(stage()).toBe("desktop-enter");
+    // The log behind the card is gone, so the fade starts from black.
+    expect(lineEls()).toHaveLength(0);
+    expect(boot().lineIndex).toBe(0);
+    walk(400);
+    expect(stage()).toBe("desktop");
+  });
+
+  it("fast mode stops at the login too", () => {
+    os.settings.update({ showLogin: true });
+    window.history.replaceState(null, "", "/?boot=fast");
+    render(<BootSequence />);
+    walkZero("login");
+    walk(10_000);
+    expect(stage()).toBe("login");
+  });
+
+  it("skip mode passes over it", () => {
+    os.settings.update({ showLogin: true });
+    window.history.replaceState(null, "", "/?boot=skip");
+    render(<BootSequence />);
+    walkZero("desktop");
+  });
+
   it("is off by default", () => {
     render(<BootSequence />);
     const seen = new Set<string>([stage()]);

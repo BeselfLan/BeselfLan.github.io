@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import { BootLog } from "./BootLog";
 import type { BootLine } from "./bootScript";
+import { LoginCard } from "./LoginCard";
+import { ShutdownLog } from "./ShutdownLog";
 import type { BootStage } from "./stages";
 import "./boot.css";
 
@@ -23,9 +25,8 @@ export interface ViewProps {
 
 const inMs = (ms: number) => ({ animationDuration: `${ms}ms` });
 
-// Nothing over the black root: the stages with no screen of their own. #14
-// gives restarting, login and shutting-down their views in the next commit,
-// and #75's lid opens over lid-opening.
+// Nothing over the black root: the stages with no screen of their own. `off`
+// and `desktop` have none, and #75's lid opens over lid-opening.
 const black = (): ReactNode => null;
 
 function powerOn({ durationMs, reduced }: ViewProps): ReactNode {
@@ -74,18 +75,29 @@ function firmware({ durationMs }: ViewProps): ReactNode {
 
 const logView = ({ lines }: ViewProps): ReactNode => <BootLog lines={lines} />;
 
+// Only reached when settings.showLogin is on; it waits for a click.
+const loginView = (): ReactNode => <LoginCard />;
+
+// Power Off and Restart print the same console, ending in their own line.
+const shuttingDown = ({ durationMs }: ViewProps): ReactNode => (
+  <ShutdownLog stage="shutting-down" durationMs={durationMs} />
+);
+const restarting = ({ durationMs }: ViewProps): ReactNode => (
+  <ShutdownLog stage="restarting" durationMs={durationMs} />
+);
+
 const VIEWS: Record<BootStage, (props: ViewProps) => ReactNode> = {
   off: black,
   "lid-opening": black,
   "power-on": powerOn,
   firmware,
   "boot-log": logView,
-  login: black,
+  login: loginView,
   // The fade is on the root, which BootSequence owns.
   "desktop-enter": logView,
   desktop: black,
-  "shutting-down": black,
-  restarting: black,
+  "shutting-down": shuttingDown,
+  restarting,
 };
 
 /** The screen for `stage`, drawn inside the black root. */
