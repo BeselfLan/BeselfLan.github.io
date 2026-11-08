@@ -102,6 +102,9 @@ export function createStageLoop(o: StageLoopOptions): StageLoop {
   let stage = o.bounds;
   let progress = 0;
   let slide = { from: 0, to: 0, start: 0 };
+  // What the world's walls are now: the stage less the panel's share. Every
+  // change goes through `setWalls`, so this is what the world was last given.
+  let walls: Rect = o.bounds;
   let frame: number | null = null;
   let last: number | null = null;
   let visible = o.visibility.isVisible();
@@ -114,7 +117,11 @@ export function createStageLoop(o: StageLoopOptions): StageLoop {
     }
   }
 
-  const walls = () => wallRect(stage, progress);
+  function setWalls(rect: Rect) {
+    // The world throws on a field that is not finite, before `walls` changes.
+    world.setBounds(rect);
+    walls = rect;
+  }
 
   // One step of the slide at frame time `t`. While the window is hidden no
   // frame runs, so a wall set then lands on the first frame after it shows.
@@ -122,7 +129,7 @@ export function createStageLoop(o: StageLoopOptions): StageLoop {
     if (progress === slide.to) return;
     const e = panelProgress(t - slide.start);
     progress = e >= 1 ? slide.to : slide.from + (slide.to - slide.from) * e;
-    world.setBounds(walls());
+    setWalls(wallRect(stage, progress));
   }
 
   function tick(t: number) {
@@ -164,7 +171,7 @@ export function createStageLoop(o: StageLoopOptions): StageLoop {
       // `bodies()` is the live array and `remove` splices it, so copy the ids.
       const old = world.bodies().map((b) => b.id);
       for (const id of old) world.remove(id);
-      const points = spawnPositions(ids.length, walls(), r, rng);
+      const points = spawnPositions(ids.length, walls, r, rng);
       for (let i = 0; i < ids.length; i++) {
         world.add({ id: ids[i], x: points[i].x, y: points[i].y, r });
       }
@@ -172,7 +179,7 @@ export function createStageLoop(o: StageLoopOptions): StageLoop {
     },
     setBounds(rect) {
       // The world throws on a field that is not finite before `stage` changes.
-      world.setBounds(wallRect(rect, progress));
+      setWalls(wallRect(rect, progress));
       stage = rect;
     },
     setWall(open, now = o.clock.now(), options = {}) {
@@ -180,13 +187,13 @@ export function createStageLoop(o: StageLoopOptions): StageLoop {
       if (options.instant) {
         slide = { from: to, to, start: now };
         progress = to;
-        world.setBounds(walls());
+        setWalls(wallRect(stage, progress));
         return;
       }
       if (slide.to === to) return;
       slide = { from: progress, to, start: now };
     },
-    bounds: () => walls(),
+    bounds: () => ({ ...walls }),
     grab: (id, point) => world.grab(id, point),
     moveGrab: (id, point) => world.moveGrab(id, point),
     release: (id, velocity) => world.release(id, velocity),
