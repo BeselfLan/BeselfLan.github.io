@@ -4,21 +4,25 @@ import type { ReactNode } from "react";
 import { gridApps } from "../apps/registry";
 import { os } from "../store";
 import { Button } from "../ui/Button";
+import { Signature } from "./Signature";
+import { TopBar } from "./TopBar";
+import { Wallpaper } from "./Wallpaper";
 
-// A stub with its final props (plan 2.7, #67): a plain background and a small
-// launcher, for trying `/` before the real desktop exists. The desktop issues
-// (#15 and #16) replace this body and remove the launcher.
+// The desktop surface (plan 4.1, #77). `children` is the window layer, and it
+// is rendered exactly once. The layer is `isolate`, so whatever is rendered
+// AFTER `children` paints above every window, and whatever is rendered before
+// it paints below. So the wallpaper and the signature go before `children`;
+// the top bar, dock, app grid, notifications and Alt+Tab go after it. The root
+// has no z-index and no `isolate`, so it adds nothing to the stacking.
 //
-// `children` is the window layer, and it is rendered exactly once. The layer is
-// `isolate`, so whatever is rendered AFTER `children` paints above every
-// window, and whatever is rendered before it paints below. So the wallpaper
-// goes before `children`; the top bar, dock, app grid, notifications and
-// Alt+Tab go after it. The root has no z-index and no `isolate`, so it adds
-// nothing to the stacking.
+// The small launcher stays until #16 replaces it with the dock.
 export function Desktop({ children }: { children: ReactNode }) {
   return (
-    <div className="absolute inset-0 bg-os-aubergine">
+    <div className="absolute inset-0">
+      <Wallpaper />
+      <Signature />
       {children}
+      <TopBar />
       <nav
         aria-label="Apps"
         className="absolute top-12 right-4 flex flex-col gap-2"
