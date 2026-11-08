@@ -1,19 +1,33 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { BOOT_STAGES, bootMachine, createStageMachine } from "@/os/boot/stages";
+import {
+  BOOT_STAGES,
+  createStageMachine,
+  type StageTable,
+} from "@/os/boot/stages";
 import { os, useOS } from "@/os/store";
 import { LOCK_NOTICE, lockOutcome, power, SETTINGS_NOTICE } from "./power";
 
-// The real table plus a stage that a "lock" event enters, as stages.test.ts
-// builds it. #14 adds an entry like this one.
-const lockMachine = createStageMachine({
+// Two machines from one table that has a lock event, so these tests pass
+// whether or not the real table has one.
+const LOCK_TABLE: StageTable = {
   ...BOOT_STAGES,
-  locked: {
-    duration: { full: null, fast: null, skip: null },
-    onEnter: () => {},
-    next: "desktop",
-    enteredBy: { lock: ["desktop"] },
-  },
-});
+  login: { ...BOOT_STAGES.login, enteredBy: { lock: ["desktop"] } },
+};
+
+/** A copy of `table` in which no entry is entered by `event`. */
+function without(table: StageTable, event: string): StageTable {
+  const copy: StageTable = {};
+  for (const [name, def] of Object.entries(table)) {
+    const enteredBy = Object.fromEntries(
+      Object.entries(def.enteredBy ?? {}).filter(([e]) => e !== event),
+    );
+    copy[name] = { ...def, enteredBy };
+  }
+  return copy;
+}
+
+const withLock = createStageMachine(LOCK_TABLE);
+const withoutLock = createStageMachine(without(LOCK_TABLE, "lock"));
 
 const stateWith = (showLogin: boolean, stage = "desktop") => ({
   boot: { stage },
@@ -34,21 +48,19 @@ afterEach(() => {
 
 describe("Lock follows the stage table", () => {
   it("locks when the login is on and the table has a lock event", () => {
-    expect(lockOutcome(stateWith(true), lockMachine)).toBe("lock");
+    expect(lockOutcome(stateWith(true), withLock)).toBe("lock");
   });
 
   it("notifies when the login is off, even with a lock event", () => {
-    expect(lockOutcome(stateWith(false), lockMachine)).toBe("notify");
+    expect(lockOutcome(stateWith(false), withLock)).toBe("notify");
   });
 
-  it("notifies on v2's real table, which has no lock event", () => {
-    expect(lockOutcome(stateWith(true), bootMachine)).toBe("notify");
+  it("notifies when the table has no lock event, even with the login on", () => {
+    expect(lockOutcome(stateWith(true), withoutLock)).toBe("notify");
   });
 
   it("notifies from a stage the lock event does not leave", () => {
-    expect(lockOutcome(stateWith(true, "boot-log"), lockMachine)).toBe(
-      "notify",
-    );
+    expect(lockOutcome(stateWith(true, "boot-log"), withLock)).toBe("notify");
   });
 
   it("sends the lock event, and pushes nothing, when it can lock", () => {
@@ -56,7 +68,7 @@ describe("Lock follows the stage table", () => {
       s.settings.showLogin = true;
     });
     const send = vi.spyOn(os.boot, "send");
-    power.lock(lockMachine);
+    power.lock(withLock);
     expect(send).toHaveBeenCalledTimes(1);
     expect(send).toHaveBeenCalledWith("lock");
     expect(items()).toHaveLength(0);
@@ -67,7 +79,7 @@ describe("Lock follows the stage table", () => {
       s.settings.showLogin = false;
     });
     const send = vi.spyOn(os.boot, "send");
-    power.lock(lockMachine);
+    power.lock(withLock);
     expect(send).not.toHaveBeenCalled();
     expect(items()).toHaveLength(1);
   });
@@ -105,11 +117,11 @@ describe("the actions", () => {
     expect(useOS.getState().boot.stage).toBe("desktop");
   });
 
-  it("Lock says so on the real table even with the login on", () => {
+  it("Lock says so when the table has no lock event, even with the login on", () => {
     useOS.setState((s) => {
       s.settings.showLogin = true;
     });
-    power.lock();
+    power.lock(withoutLock);
     expect(items().map((n) => n.title)).toEqual(["Lock"]);
     expect(useOS.getState().boot.stage).toBe("desktop");
   });

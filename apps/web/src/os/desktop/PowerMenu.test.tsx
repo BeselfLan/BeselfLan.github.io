@@ -146,23 +146,23 @@ describe("Settings says it is coming", () => {
 });
 
 describe("Lock says it is unavailable", () => {
-  it.each([false, true])(
-    "pushes the notice with the login %s, as the table has no lock event",
-    (showLogin) => {
-      useOS.setState((s) => {
-        s.settings.showLogin = showLogin;
-      });
-      openMenu();
-      choose("Lock");
-      expect(state().notifications.items).toHaveLength(1);
-      expect(state().notifications.items[0]).toMatchObject({
-        title: "Lock",
-        body: "Locking is not available.",
-      });
-      expect(state().boot.stage).toBe("desktop");
-      expect(state().shell.openPopover).toBeNull();
-    },
-  );
+  // With the login on, what Lock does depends on the stage table, so
+  // power.test.ts tests that with a table that has a lock event and one that
+  // does not.
+  it("pushes the notice with the login off", () => {
+    useOS.setState((s) => {
+      s.settings.showLogin = false;
+    });
+    openMenu();
+    choose("Lock");
+    expect(state().notifications.items).toHaveLength(1);
+    expect(state().notifications.items[0]).toMatchObject({
+      title: "Lock",
+      body: "Locking is not available.",
+    });
+    expect(state().boot.stage).toBe("desktop");
+    expect(state().shell.openPopover).toBeNull();
+  });
 
   it("calls the lock action and nothing else", () => {
     const lock = vi.spyOn(power, "lock");
