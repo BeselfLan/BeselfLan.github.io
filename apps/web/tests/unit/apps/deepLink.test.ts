@@ -231,7 +231,10 @@ describe("the registered deep links", () => {
     const withLink = apps.flatMap((a) =>
       a.deepLink ? [{ id: a.id, link: a.deepLink }] : [],
     );
-    expect(withLink.map((a) => a.id)).toEqual([
+    // The v1 apps that have a deepLink. An app added by new-app may have one
+    // too (a copy of Hello does); the loop below runs over all of them.
+    const v1 = ["projects", "skills", "video-player", "about", "hello"];
+    expect(withLink.map((a) => a.id).filter((id) => v1.includes(id))).toEqual([
       "projects",
       "skills",
       "about",
