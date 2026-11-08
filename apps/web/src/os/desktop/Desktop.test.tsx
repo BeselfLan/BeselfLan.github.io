@@ -1,8 +1,9 @@
-import { act, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { staticContent } from "@/content/static";
 import { Screen } from "@/os/screen/Screen";
-import { os } from "@/os/store";
+import { os, useOS } from "@/os/store";
+import { FakeResizeObserver } from "../../../tests/unit/helpers/browser";
 import {
   setupBrowser,
   teardownBrowser,
@@ -20,6 +21,14 @@ function mount() {
 }
 
 const q = (selector: string) => document.querySelector<HTMLElement>(selector);
+const menu = () => useOS.getState().shell.contextMenu;
+const DESKTOP_LABELS = [
+  "Change Background...",
+  "Display Settings",
+  "Open in Terminal",
+];
+const labelsOf = (items: readonly { id: string; label?: string }[] = []) =>
+  items.map((i) => i.label);
 
 /** True when `b` comes after `a` in document order. */
 const before = (a: Element, b: Element): boolean =>
@@ -95,6 +104,146 @@ describe("Desktop", () => {
       ]),
     );
     expect(screen.getByRole("menu")).not.toBeNull();
+  });
+
+  it("puts the App Grid after the dock, and both buttons control it", () => {
+    mount();
+    const grid = q("#desktop-app-grid")!;
+    expect(grid).not.toBeNull();
+    expect(document.querySelectorAll("[data-app-grid]")).toHaveLength(1);
+    expect(grid.hasAttribute("data-app-grid")).toBe(true);
+    expect(grid.hidden).toBe(true);
+    // The layer is isolate: a grid placed before it would paint under the windows.
+    expect(before(q('[data-testid="layer"]')!, grid)).toBe(true);
+    expect(before(q("[data-topbar]")!, grid)).toBe(true);
+    // After the dock, so it paints over it; in the root with the rest.
+    expect(before(q("[data-dock]")!, grid)).toBe(true);
+    expect(grid.parentElement).toBe(q('[data-testid="layer"]')!.parentElement);
+
+    for (const name of ["Activities", "Show Applications"]) {
+      const button = screen.getByRole("button", { name });
+      expect(button.getAttribute("aria-controls"), name).toBe(grid.id);
+    }
+  });
+
+  it("opens the grid from Activities and Show Applications", () => {
+    mount();
+    fireEvent.click(screen.getByRole("button", { name: "Activities" }));
+    expect(q("#desktop-app-grid")!.hidden).toBe(false);
+    expect(screen.getByRole("dialog", { name: "Applications" })).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Activities" }));
+    expect(q("#desktop-app-grid")!.hidden).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show Applications" }));
+    expect(q("#desktop-app-grid")!.hidden).toBe(false);
+  });
+
+  describe("the desktop menu", () => {
+    it("opens on a right-click on the wallpaper, at the pointer in client px", () => {
+      mount();
+      // The screen at half size, so a point converted to screen units would
+      // read 600 and 400 and not 300 and 200 (jsdom has no layout, so the box
+      // starts at 0,0).
+      act(() => FakeResizeObserver.last.trigger(720, 450));
+      expect(q("[data-screen-box]")!.style.getPropertyValue("--s")).toBe("0.5");
+
+      const wallpaper = q("[data-wallpaper]")!;
+      // False: preventDefault was called, so the browser's menu stays shut.
+      expect(
+        fireEvent.contextMenu(wallpaper, { clientX: 300, clientY: 200 }),
+      ).toBe(false);
+      expect(menu()).toMatchObject({ x: 300, y: 200 });
+      expect(labelsOf(menu()?.items)).toEqual(DESKTOP_LABELS);
+      expect(screen.getByRole("menu")).not.toBeNull();
+
+      // Nothing inside the windows layer opens it.
+      act(() => os.shell.closeContextMenu());
+      expect(
+        fireEvent.contextMenu(q('[data-testid="layer"]')!, {
+          clientX: 300,
+          clientY: 200,
+        }),
+      ).toBe(true);
+      expect(menu()).toBeNull();
+    });
+
+    it("is left to the top bar and the dock", () => {
+      mount();
+      fireEvent.contextMenu(q("[data-topbar]")!);
+      expect(menu()).toBeNull();
+      // The dock cancels the browser's menu and opens nothing of the desktop's.
+      fireEvent.contextMenu(q("[data-dock]")!);
+      expect(menu()).toBeNull();
+    });
+
+    it("runs its items: Change Background... moves the wallpaper", () => {
+      mount();
+      expect(q('[data-wallpaper="aubergine"]')).not.toBeNull();
+      fireEvent.contextMenu(q("[data-wallpaper]")!, {
+        clientX: 300,
+        clientY: 200,
+      });
+      fireEvent.click(
+        screen.getByRole("menuitem", { name: "Change Background..." }),
+      );
+      expect(q('[data-wallpaper="orange"]')).not.toBeNull();
+      expect(menu()).toBeNull();
+    });
+
+    it("opens from Shift+F10 with nothing focused, at the middle of the screen", () => {
+      mount();
+      vi.spyOn(
+        q("[data-screen-portal]")!,
+        "getBoundingClientRect",
+      ).mockReturnValue(new DOMRect(100, 50, 400, 300));
+      const event = new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+      });
+      act(() => {
+        document.body.dispatchEvent(event);
+      });
+      expect(event.defaultPrevented).toBe(true);
+      expect(menu()).toMatchObject({ x: 300, y: 200 });
+      expect(labelsOf(menu()?.items)).toEqual(DESKTOP_LABELS);
+      // The menu takes focus, so the keyboard can use it.
+      expect(document.activeElement?.getAttribute("role")).toBe("menuitem");
+    });
+
+    it("leaves a contextmenu on the body that was already handled", () => {
+      mount();
+      const handled = (e: Event) => e.preventDefault();
+      document.body.addEventListener("contextmenu", handled);
+      act(() => {
+        document.body.dispatchEvent(
+          new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+        );
+      });
+      document.body.removeEventListener("contextmenu", handled);
+      expect(menu()).toBeNull();
+    });
+
+    it("stops listening on the body when the desktop unmounts", () => {
+      const { unmount } = mount();
+      const dispatch = () => {
+        const event = new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+        });
+        act(() => {
+          document.body.dispatchEvent(event);
+        });
+        return event;
+      };
+      expect(dispatch().defaultPrevented).toBe(true);
+      expect(menu()).not.toBeNull();
+
+      act(() => os.shell.closeContextMenu());
+      unmount();
+      const after = dispatch();
+      expect(menu()).toBeNull();
+      expect(after.defaultPrevented).toBe(false);
+    });
   });
 
   describe("the signature", () => {
