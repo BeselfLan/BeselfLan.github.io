@@ -19,8 +19,7 @@ export interface TitleBarProps {
 const stop = (e: SyntheticEvent) => e.stopPropagation();
 
 // Whole class strings per tone, so no element carries two hover:bg-* classes.
-// Dark text on the orange follows the same contrast call as the Button: about
-// 5:1, where white gives about 3.6:1.
+// Dark text on the orange is about 5:1, where white is about 3.6:1.
 const BASE =
   "grid size-6 place-items-center rounded-full text-os-panel-fg " +
   "focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-os-accent";
