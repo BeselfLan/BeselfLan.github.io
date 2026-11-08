@@ -629,6 +629,22 @@ describe("closeWindow", () => {
     expect(has("a")).toBe(true);
   });
 
+  it("a hook written as a method that reads `this` can refuse", async () => {
+    // Called detached, `this` would be undefined, the read would throw, and a
+    // throw counts as allow: the window would close.
+    const app = {
+      ...def("a"),
+      refuse: true,
+      onBeforeClose() {
+        return !this.refuse;
+      },
+    };
+    register(app);
+    os.windows.openApp("a");
+    await os.windows.closeWindow("a");
+    expect(has("a")).toBe(true);
+  });
+
   it("the hook is awaited", async () => {
     const d = deferred();
     register(def("a", { onBeforeClose: () => d.promise }));

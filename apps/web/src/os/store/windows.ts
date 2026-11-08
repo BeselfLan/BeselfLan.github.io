@@ -181,12 +181,14 @@ export function createWindowActions(api: OSApi) {
     async closeWindow(id: string): Promise<void> {
       const w = api.getState().windows.items.find((x) => x.id === id);
       if (!w || closing.has(id)) return;
-      const hook = lookup(w.appId)?.onBeforeClose;
-      if (hook) {
+      // Called on the app, not detached, so a hook written as a method can
+      // read `this`.
+      const app = lookup(w.appId);
+      if (app?.onBeforeClose) {
         closing.add(id);
         let allow = true;
         try {
-          allow = await hook({ windowId: id, args: w.args });
+          allow = await app.onBeforeClose({ windowId: id, args: w.args });
         } catch {
           // A broken app must not leave a window that cannot be closed.
         } finally {
