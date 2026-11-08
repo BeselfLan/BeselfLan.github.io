@@ -270,6 +270,9 @@ function script(
     env: {
       ...process.env,
       PATH: `${dirname(process.execPath)}:${process.env.PATH}`,
+      // Empty means the default, so a value exported in the shell cannot leak in.
+      MEDIA_MAX_BYTES: "",
+      MEDIA_MAX_FPS: "",
       ...env,
     },
   });
@@ -284,7 +287,7 @@ function ffprobe(file: string) {
       "-select_streams",
       "v:0",
       "-show_entries",
-      "stream=codec_name,pix_fmt,width,height",
+      "stream=codec_name,pix_fmt,width,height,avg_frame_rate",
       "-of",
       "json",
       file,
@@ -295,25 +298,43 @@ function ffprobe(file: string) {
     .streams[0];
 }
 
-/** A one-second 63x35 GIF. Odd sides, so the even-size scale matters. */
-function makeGif(dir: string): string {
-  const gif = join(dir, "src.gif");
+/**
+ * A GIF made from a lavfi source. The default is one second at 63x35: odd
+ * sides, so the even-size scale matters.
+ */
+function makeGif(
+  dir: string,
+  source = "testsrc=size=63x35:rate=10:duration=1",
+  name = "src.gif",
+): string {
+  const gif = join(dir, name);
   const made = spawnSync(
     "ffmpeg",
-    [
-      "-hide_banner",
-      "-loglevel",
-      "error",
-      "-f",
-      "lavfi",
-      "-i",
-      "testsrc=size=63x35:rate=10:duration=1",
-      gif,
-    ],
+    ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", source, gif],
     { encoding: "utf8" },
   );
   expect(made.status, made.stderr).toBe(0);
   return gif;
+}
+
+/** What convert.sh prints on stderr for each file: its rate, CRF and size. */
+function settings(stderr: string) {
+  const found: Record<string, { fps: number; crf: number; bytes: number }> = {};
+  const line = /^convert: (\S+) fps=(\d+)\/(\d+) crf=(\d+) bytes=(\d+)$/gm;
+  for (const m of stderr.matchAll(line)) {
+    found[m[1]] = {
+      fps: Number(m[2]) / Number(m[3]),
+      crf: Number(m[4]),
+      bytes: Number(m[5]),
+    };
+  }
+  return found;
+}
+
+/** A frame rate as ffprobe writes it ("25/1") as a number. */
+function rate(fraction: unknown): number {
+  const [num, den] = String(fraction).split("/");
+  return Number(num) / Number(den);
 }
 
 describe.skipIf(!has("ffmpeg") || !has("ffprobe"))("convert.sh", () => {
@@ -322,6 +343,21 @@ describe.skipIf(!has("ffmpeg") || !has("ffprobe"))("convert.sh", () => {
     const out = join(work, "media");
     const run = script("convert.sh", [makeGif(work), "demo", out]);
     expect(run.status, run.stderr).toBe(0);
+
+    // A 10 fps clip is under the cap, so it is not resampled. Each file starts
+    // at Appendix C.3's CRF, and the size printed is the file's own.
+    expect(settings(run.stderr)).toEqual({
+      "demo.mp4": {
+        fps: 10,
+        crf: 23,
+        bytes: statSync(join(out, "demo.mp4")).size,
+      },
+      "demo.webm": {
+        fps: 10,
+        crf: 33,
+        bytes: statSync(join(out, "demo.webm")).size,
+      },
+    });
 
     // Odd 63x35 input: both renditions are scaled to even sides, in yuv420p.
     expect(ffprobe(join(out, "demo.mp4"))).toMatchObject({
@@ -421,6 +457,124 @@ describe.skipIf(!has("ffmpeg") || !has("ffprobe"))("convert.sh", () => {
     expect(readdirSync(out).sort()).toEqual(files);
     expect(readFileSync(manifest).equals(before)).toBe(true);
   }, 60_000);
+
+  it("halves a frame rate above the cap until it fits, and keeps the duration", () => {
+    const work = tempDir();
+    const gif = makeGif(work, "testsrc=size=64x36:rate=50:duration=1");
+    expect(rate(ffprobe(gif).avg_frame_rate)).toBe(50);
+
+    // The default cap is 30: 50 is halved once, to 25, for both files.
+    const out = join(work, "media");
+    const run = script("convert.sh", [gif, "demo", out]);
+    expect(run.status, run.stderr).toBe(0);
+    const used = settings(run.stderr);
+    expect(used["demo.mp4"].fps).toBe(25);
+    expect(used["demo.webm"].fps).toBe(25);
+    expect(rate(ffprobe(join(out, "demo.mp4")).avg_frame_rate)).toBeCloseTo(
+      25,
+      2,
+    );
+    expect(rate(ffprobe(join(out, "demo.webm")).avg_frame_rate)).toBeCloseTo(
+      25,
+      2,
+    );
+    const [item] = readManifest(join(out, "manifest.json"));
+    expect(item.durationMs).toBeGreaterThan(900);
+    expect(item.durationMs).toBeLessThan(1100);
+
+    // A cap of 13 takes two halvings: 50 to 25 is still over, 12.5 is not.
+    const low = join(work, "low");
+    const again = script("convert.sh", [gif, "demo", low], {
+      MEDIA_MAX_FPS: "13",
+    });
+    expect(again.status, again.stderr).toBe(0);
+    expect(settings(again.stderr)["demo.mp4"].fps).toBe(12.5);
+    expect(settings(again.stderr)["demo.webm"].fps).toBe(12.5);
+  }, 60_000);
+
+  it("steps the CRF up only for the file over the budget", () => {
+    const work = tempDir();
+    const gif = makeGif(work, "testsrc2=size=320x180:rate=10:duration=2");
+
+    // Without a limit nothing steps, whatever the sizes.
+    const free = script("convert.sh", [gif, "demo", join(work, "free")], {
+      MEDIA_MAX_BYTES: "0",
+    });
+    expect(free.status, free.stderr).toBe(0);
+    const first = settings(free.stderr);
+    expect(first["demo.mp4"].crf).toBe(23);
+    expect(first["demo.webm"].crf).toBe(33);
+    expect(first["demo.mp4"].bytes).not.toBe(first["demo.webm"].bytes);
+
+    // A budget one byte under the larger file: only that file is encoded again.
+    const bigger =
+      first["demo.mp4"].bytes > first["demo.webm"].bytes
+        ? "demo.mp4"
+        : "demo.webm";
+    const smaller = bigger === "demo.mp4" ? "demo.webm" : "demo.mp4";
+    const budget = first[bigger].bytes - 1;
+    const out = join(work, "fit");
+    const run = script("convert.sh", [gif, "demo", out], {
+      MEDIA_MAX_BYTES: String(budget),
+    });
+    expect(run.status, run.stderr).toBe(0);
+    const fitted = settings(run.stderr);
+    expect(fitted[bigger].crf).toBeGreaterThan(first[bigger].crf);
+    expect(fitted[bigger].bytes).toBeLessThanOrEqual(budget);
+    expect(statSync(join(out, bigger)).size).toBeLessThanOrEqual(budget);
+    expect(fitted[smaller]).toEqual(first[smaller]);
+  }, 120_000);
+
+  it("a budget it cannot meet fails at the last CRF and writes nothing", () => {
+    const work = tempDir();
+    const out = goodFolder("old");
+    const manifest = join(out, "manifest.json");
+    const before = readFileSync(manifest);
+    const files = readdirSync(out).sort();
+
+    const run = script("convert.sh", [makeGif(work), "demo", out], {
+      MEDIA_MAX_BYTES: "1",
+    });
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toContain("demo.mp4");
+    expect(run.stderr).toContain("crf=30");
+    expect(run.stderr).toContain("MEDIA_MAX_BYTES");
+    expect(readdirSync(out).sort()).toEqual(files);
+    expect(readFileSync(manifest).equals(before)).toBe(true);
+  }, 120_000);
+
+  it("a re-run writes the same bytes", () => {
+    const work = tempDir();
+    const gif = makeGif(work);
+    const one = join(work, "one");
+    const two = join(work, "two");
+    for (const out of [one, two]) {
+      const run = script("convert.sh", [gif, "demo", out]);
+      expect(run.status, run.stderr).toBe(0);
+    }
+    for (const name of ["demo.mp4", "demo.webm", "demo.jpg", "manifest.json"]) {
+      expect(
+        readFileSync(join(one, name)).equals(readFileSync(join(two, name))),
+        name,
+      ).toBe(true);
+    }
+  }, 120_000);
+
+  it.each<[Record<string, string>, string]>([
+    [{ MEDIA_MAX_BYTES: "1.5MB" }, "MEDIA_MAX_BYTES"],
+    [{ MEDIA_MAX_FPS: "0" }, "MEDIA_MAX_FPS"],
+  ])(
+    "a bad setting %o stops before any work",
+    (env, name) => {
+      const work = tempDir();
+      const out = join(work, "never");
+      const run = script("convert.sh", [makeGif(work), "demo", out], env);
+      expect(run.status).not.toBe(0);
+      expect(run.stderr).toContain(name);
+      expect(existsSync(out)).toBe(false);
+    },
+    60_000,
+  );
 });
 
 // The fixtures are fake bytes and a manifest that names them, so ffmpeg is not
