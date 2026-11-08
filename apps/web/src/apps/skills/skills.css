@@ -13,10 +13,50 @@
  * stays their one source.
  */
 
-/* The stage holds the icons. The pointer drives them, not the page's scroll. */
+/*
+ * The stage holds the icons. The pointer drives them, not the page's scroll.
+ * It is its own stacking context, so the icons' z-index stays inside it and
+ * never rises over the panel beside it.
+ */
 .skills-stage {
   touch-action: none;
   user-select: none;
+  isolation: isolate;
+}
+
+/*
+ * The detail panel (plan 6.5): over the right of the stage's row, its width set
+ * inline (340, or 100% in the fullscreen mode). It exists only while a skill is
+ * selected, so it slides in on mount with a keyframe animation (a transition
+ * cannot run on an element that has just mounted), over the same 250 ms and the
+ * same ease-out cubic as the wall in stageLoop.ts, and closing unmounts it. The
+ * length arrives as a custom property so layout.ts stays its one source.
+ */
+.skills-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+  overflow-y: auto;
+  background: var(--os-panel);
+  color: var(--os-panel-fg);
+  border-left: 1px solid rgb(255 255 255 / 0.1);
+  box-shadow: var(--os-shadow-popover);
+}
+
+.skills-panel-enter {
+  animation: skills-panel-in var(--skills-panel-ms)
+    cubic-bezier(0.33, 1, 0.68, 1) both;
+}
+
+@keyframes skills-panel-in {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: none;
+  }
 }
 
 /*
