@@ -11,9 +11,14 @@ const nextConfig: NextConfig = {
   agentRules: false,
   turbopack: {
     rules: {
+      // Tailwind runs on global stylesheets only. `as: "*.css"` turns the
+      // loader's output into global CSS, so a matched `.module.css` lost its
+      // scoping (#86). Modules use Turbopack's own CSS Module handling and
+      // plain CSS: the tokens are CSS variables, so they need no Tailwind.
       "*.css": {
         loaders: ["@tailwindcss/turbopack"],
         as: "*.css",
+        condition: { not: { path: /\.module\.css$/ } },
       },
     },
   },
