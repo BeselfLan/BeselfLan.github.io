@@ -1,5 +1,6 @@
 "use client";
 
+import type { MouseEventHandler } from "react";
 import { useOS } from "../store";
 
 /**
@@ -9,8 +10,16 @@ import { useOS } from "../store";
  * a variable would never be generated. (Do not write that class out in a
  * comment either: Tailwind reads comments, and the build fails on it.) The
  * wallpaper sits inside the screen, never on body.
+ *
+ * `onContextMenu` gets a right-click on the bare desktop. The windows layer
+ * and the signature take no pointer events, so only what is not covered by
+ * the top bar, the dock or a window reaches it.
  */
-export function Wallpaper() {
+export function Wallpaper({
+  onContextMenu,
+}: {
+  onContextMenu?: MouseEventHandler<HTMLDivElement>;
+}) {
   const id = useOS((s) => s.settings.wallpaper);
   return (
     <div
@@ -18,6 +27,7 @@ export function Wallpaper() {
       aria-hidden="true"
       className="absolute inset-0 bg-cover bg-center"
       style={{ backgroundImage: `url("/wallpapers/${id}.svg")` }}
+      onContextMenu={onContextMenu}
     />
   );
 }

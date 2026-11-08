@@ -8,6 +8,7 @@ import { focusedWindow, os, useOS } from "../store";
 import { Button } from "../ui/Button";
 import type { AnchorRect } from "../ui/placement";
 import { REDUCED_MOTION } from "../window/windowMotion";
+import { APP_GRID_ID } from "./appGrid";
 import { CalendarPopover } from "./CalendarPopover";
 import { formatClock, useClock } from "./clock";
 import { useMediaStatus } from "./mediaStatus";
@@ -43,6 +44,8 @@ export function TopBar() {
     reducedSetting === "on" || (reducedSetting === "system" && !!systemReduced);
 
   const activitiesOpen = useOS((s) => s.shell.activitiesOpen);
+  // From the store and not `useScreenMode()`, which needs matchMedia.
+  const mode = useOS((s) => s.windows.mode);
   const openPopover = useOS((s) => s.shell.openPopover);
   // A string, so the selector is stable; the window object is not.
   const appId = useOS((s) => focusedWindow(s)?.appId ?? null);
@@ -75,13 +78,18 @@ export function TopBar() {
         <Button
           variant="ghost"
           aria-expanded={activitiesOpen}
+          aria-controls={APP_GRID_ID}
           onClick={() => os.shell.toggleActivities()}
         >
           Activities
         </Button>
-        <span data-focused-app="" className="ml-2 font-medium">
-          {appName}
-        </span>
+        {/* Fullscreen maximises every window and its title bar names the app,
+            and the name would run under the clock on a narrow screen. */}
+        {mode === "laptop" && (
+          <span data-focused-app="" className="ml-2 font-medium">
+            {appName}
+          </span>
+        )}
 
         <Button
           ref={clockRef}
