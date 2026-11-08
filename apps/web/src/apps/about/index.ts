@@ -1,9 +1,11 @@
 import { lazy } from "react";
 import { defineApp, type NoArgs } from "@/os/apps/types";
 
-// A placeholder definition (the note on #10). The About issue (#21) replaces
-// this file and AboutApp.tsx. It keeps the default export made with defineApp
-// and the id, because os/apps/registry.ts depends on both.
+// The About app's definition. Its values are pinned by the lead's
+// registry.test.ts and deepLink.test.ts: the name, the 760 x 600 window, the
+// dock slot 3, the App Grid, a singleton, the icon path and a deep link with
+// no params. os/apps/registry.ts needs the default export made with defineApp
+// and the id "about", so keep both.
 
 export default defineApp<NoArgs>({
   id: "about",

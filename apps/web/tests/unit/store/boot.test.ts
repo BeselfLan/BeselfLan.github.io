@@ -108,19 +108,23 @@ describe("no per-stage branches", () => {
   });
 
   it("adding a stage needs no slice change", () => {
+    // The machine enters the first entry, in table order, that lists the
+    // event from the current stage. So the event must be one the real table
+    // does not use, or a real entry would take it.
+    expect(bootMachine.stageForEvent("idle", "desktop")).toBeNull();
     const table = {
       ...BOOT_STAGES,
-      locked: {
+      screensaver: {
         duration: noTimers,
         onEnter: () => {},
         next: "desktop",
-        enteredBy: { lock: ["desktop"] },
+        enteredBy: { idle: ["desktop"] },
       },
     } satisfies StageTable;
     const host = hostAt<keyof typeof table>("desktop");
     const actions = createBootActions(host, table);
-    actions.send("lock");
-    expect(host.getState().boot.stage).toBe("locked");
+    actions.send("idle");
+    expect(host.getState().boot.stage).toBe("screensaver");
     actions.advance();
     expect(host.getState().boot.stage).toBe("desktop");
   });
