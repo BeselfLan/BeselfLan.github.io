@@ -1,8 +1,9 @@
+import { content } from "@beself/content";
 import { expect, test, type Page } from "@playwright/test";
 
 // The Skills window in Chromium: the tabs, the floating emblems, a drag, a
-// click and the keyboard (#89). #90 adds the detail panel, the list view and
-// its own tests to this file.
+// click and the keyboard (#89), then the detail panel with its wall, the
+// "Used in" chips, Escape, the list view and reduced motion (#90).
 //
 // The icons never stop drifting, so Playwright's "stable" check never passes
 // for them: no test calls `locator.click()` on an icon. A click or a drag is
@@ -28,6 +29,10 @@ const win = (page: Page) => page.locator('[data-window-id="skills"]');
 const icons = (page: Page) => win(page).locator("[data-skill-id]");
 const icon = (page: Page, id: string) =>
   win(page).locator(`[data-skill-id="${id}"]`);
+const panel = (page: Page) => win(page).locator("[data-skill-panel]");
+
+// The text of a skill, read from the content package as desktop.spec.ts does.
+const python = content.skills.find((s) => s.id === "python")!;
 
 // Opens through the deep link, never through the desktop's stub launcher. A
 // deep link fast-boots (#14); the app is a lazy chunk, so the window shows a
@@ -88,12 +93,12 @@ test("a deep link opens Skills on All", async ({ page }) => {
     "sharepoint",
   );
   await expect(win(page).locator("[data-selected]")).toHaveCount(0);
-  // The four practices are labels in the footer, not buttons.
+  // The four practices are toggle chips in the footer, none of them pressed.
+  const practices = win(page).getByRole("group", { name: "Practices" });
   for (const name of PRACTICES) {
-    await expect(win(page).getByText(name, { exact: true })).toBeVisible();
     await expect(
-      win(page).getByRole("button", { name, exact: true }),
-    ).toHaveCount(0);
+      practices.getByRole("button", { name, exact: true }),
+    ).toHaveAttribute("aria-pressed", "false");
   }
   // Every emblem is drawn (no image to fail).
   await expect(win(page).locator("[data-skill-icon]")).toHaveCount(45);
@@ -150,8 +155,11 @@ test("drag an icon 300 px", async ({ page }) => {
   // While held, the icon is under the pointer: within half its width of it.
   await expect(async () => {
     const now = await centreOf(page, "python");
-    expect(Math.abs(now.x - end.x)).toBeLessThan(start.half);
-    expect(Math.abs(now.y - end.y)).toBeLessThan(start.half);
+    // A grabbed body keeps its grab offset (the centre, here) and sits on its
+    // target. A stage that ignored the screen's scale would leave it 23 px
+    // behind after 300 px, which is inside half an icon (#89's review note).
+    expect(Math.abs(now.x - end.x)).toBeLessThan(4);
+    expect(Math.abs(now.y - end.y)).toBeLessThan(4);
   }).toPass({ timeout: 5000 });
 
   await page.mouse.up();
@@ -222,4 +230,100 @@ test("an item and a tab link press the tab and select the item", async ({
   await expect(chip(page, "Tools")).toHaveAttribute("aria-pressed", "true");
   await expect(icons(page)).toHaveCount(17);
   await expect(icon(page, "git")).toHaveAttribute("data-selected", "");
+});
+
+test("click Python opens the panel, the wall clears it, Escape closes it", async ({
+  page,
+}) => {
+  await openSkills(page);
+  await expect(async () => {
+    const p = await centreOf(page, "python");
+    await page.mouse.click(p.x, p.y);
+    await expect(panel(page)).toBeVisible({ timeout: 1000 });
+  }).toPass({ timeout: 10_000 });
+  await expect(
+    panel(page).getByRole("heading", { level: 3, name: "Python" }),
+  ).toBeVisible();
+  await expect(
+    panel(page).getByRole("heading", { level: 4, name: "How I've used it" }),
+  ).toBeVisible();
+  await expect(panel(page)).toContainText(python.description);
+  await expect(panel(page)).toContainText(python.howIUsedIt);
+  await expect(icon(page, "python")).toHaveAttribute("aria-expanded", "true");
+
+  // The wall has had 1.5 s of frames to push every icon out from behind the
+  // panel (the world moves on every frame, so wait on the page's own frames).
+  const t = await page.evaluate(() => performance.now());
+  await page.waitForFunction((t0) => performance.now() - t0 >= 1500, t, {
+    polling: "raf",
+  });
+  const behind = await page.evaluate(() => {
+    const root = document.querySelector('[data-window-id="skills"]')!;
+    const left = root
+      .querySelector("[data-skill-panel]")!
+      .getBoundingClientRect().left;
+    return [...root.querySelectorAll("[data-skill-id]")]
+      .filter((el) => el.getBoundingClientRect().right > left + 2)
+      .map((el) => el.getAttribute("data-skill-id"));
+  });
+  expect(behind).toEqual([]);
+
+  // Escape, with the Skills window focused, closes the panel and not the window.
+  await page.keyboard.press("Escape");
+  await expect(panel(page)).toHaveCount(0);
+  await expect(win(page)).toBeVisible();
+  await expect(icon(page, "python")).toHaveAttribute("aria-expanded", "false");
+});
+
+test("a deep link opens the panel, and Used in opens Projects", async ({
+  page,
+}) => {
+  await openSkills(page, "&item=python");
+  await expect(
+    panel(page).getByRole("heading", { level: 3, name: "Python" }),
+  ).toBeVisible();
+  // A chip sits in the panel, which does not drift, so a plain click is fine.
+  await panel(page)
+    .getByRole("button", { name: "Bash Terminal Recreation in C", exact: true })
+    .click();
+  await expect(page.locator('[data-window-id="projects"]')).toBeVisible({
+    timeout: 15_000,
+  });
+});
+
+test("list view shows the same skills as cards", async ({ page }) => {
+  await openSkills(page);
+  const toggle = win(page).getByRole("button", { name: "List view" });
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await expect(win(page).locator("[data-skills-stage]")).toHaveCount(0);
+
+  const cards = win(page).locator("[data-skill-cards] [data-skill-card]");
+  await expect(cards).toHaveCount(45);
+  await chip(page, "Tools").click();
+  await expect(cards).toHaveCount(17);
+  await expect(cards.first()).toHaveAttribute("data-skill-card", "git");
+  await expect(
+    win(page).locator("[data-skill-practices] [data-skill-card]"),
+  ).toHaveCount(4);
+
+  await win(page).locator('[data-skill-card="git"]').click();
+  await expect(
+    panel(page).getByRole("heading", { level: 3, name: "Git" }),
+  ).toBeVisible();
+  await expect(win(page).locator('[data-skill-card="git"]')).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+});
+
+test("reduced motion opens in list view", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/?app=skills");
+  await expect(win(page)).toBeVisible({ timeout: 15_000 });
+  const toggle = win(page).getByRole("button", { name: "List view" });
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await expect(win(page).locator("[data-skill-list]")).toBeVisible();
+  await expect(win(page).locator("[data-skills-stage]")).toHaveCount(0);
 });
