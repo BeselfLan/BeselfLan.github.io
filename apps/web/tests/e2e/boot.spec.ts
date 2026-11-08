@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 // The full boot on `/` (plan 3.2, 3.3). #75's laptop tests join this file, so
 // the helpers stay local and nothing is exported.
@@ -287,4 +287,187 @@ test("one polite live region", async ({ page }) => {
     logs: 0,
     hiddenLog: "true",
   });
+});
+
+// The laptop (#75). These share the helpers above.
+
+async function rect(locator: Locator) {
+  const box = await locator.boundingBox();
+  if (!box) throw new Error("element has no bounding box");
+  return box;
+}
+
+test("the server HTML is the closed laptop", async ({ page }) => {
+  const html = await (await page.request.get("/")).text();
+  expect(html).toContain('data-lid="closed"');
+  expect(html).toContain('data-boot-stage="off"');
+});
+
+interface LidFrame {
+  at: number;
+  /** The boot stage, or "gone" once the boot overlay is removed. */
+  stage: string;
+  lid: string | null;
+  lidTransform: string;
+  cameraTransform: string;
+  perspective: string;
+}
+type LidWatched = Window & { __lidTrace?: LidFrame[] };
+
+test("the lid opens during lid-opening and is flat after", async ({ page }) => {
+  // A frame loop from the first moment: lid-opening is 1000 ms long.
+  await page.addInitScript(() => {
+    const trace: LidFrame[] = ((window as unknown as LidWatched).__lidTrace =
+      []);
+    let seen = false;
+    const tick = () => {
+      const root = document.querySelector("[data-boot-stage]");
+      if (root) seen = true;
+      const stage = root
+        ? root.getAttribute("data-boot-stage")
+        : seen
+          ? "gone"
+          : null;
+      const laptop = document.querySelector("[data-laptop]");
+      const lid = document.querySelector("[data-laptop-lid]");
+      const camera = document.querySelector("[data-laptop-camera]");
+      if (stage !== null && laptop && lid && camera) {
+        trace.push({
+          at: performance.now(),
+          stage,
+          lid: laptop.getAttribute("data-lid"),
+          lidTransform: getComputedStyle(lid).transform,
+          cameraTransform: getComputedStyle(camera).transform,
+          perspective: getComputedStyle(laptop).perspective,
+        });
+      }
+      if (stage !== "gone") requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+  await page.goto("/");
+  await inFrame(page, () => {
+    const trace = (window as unknown as LidWatched).__lidTrace ?? [];
+    return trace.at(-1)?.stage === "gone";
+  });
+  const trace = await page.evaluate(
+    () => (window as unknown as LidWatched).__lidTrace ?? [],
+  );
+
+  // The lid is "opening" exactly while the stage is lid-opening.
+  for (const f of trace) {
+    expect(f.lid === "opening", `${f.stage} frame has lid ${f.lid}`).toBe(
+      f.stage === "lid-opening",
+    );
+  }
+  // It was closed before, and it moves rather than snaps: some frame well into
+  // the stage still has a transform.
+  expect(trace[0].lid).toBe("closed");
+  expect(trace[0].lidTransform).not.toBe("none");
+  const opening = trace.filter((f) => f.stage === "lid-opening");
+  expect(opening.length).toBeGreaterThan(0);
+  const midway = opening.filter((f) => f.at >= opening[0].at + 400);
+  expect(midway.length).toBeGreaterThan(0);
+  expect(midway.some((f) => f.lidTransform !== "none")).toBe(true);
+
+  // Settled is flat: nothing is transformed and the desk has no perspective,
+  // or Screen's rect, and the text in it, would be off. The first frames of
+  // power-on are left out, because motion writes the instant snap on its next
+  // frame.
+  const powerOn = trace.filter((f) => f.stage === "power-on");
+  expect(powerOn.length).toBeGreaterThan(0);
+  const settled = powerOn.filter((f) => f.at >= powerOn[0].at + 100);
+  expect(settled.length).toBeGreaterThan(0);
+  for (const f of settled) {
+    expect(f.lidTransform).toBe("none");
+    expect(f.cameraTransform).toBe("none");
+    expect(f.perspective).toBe("none");
+  }
+  for (const f of trace.filter((f) => f.stage === "gone")) {
+    expect(f.lidTransform).toBe("none");
+    expect(f.cameraTransform).toBe("none");
+  }
+});
+
+for (const [width, height] of [
+  [1280, 800],
+  [1920, 1080],
+] as const) {
+  test(`the settled screen fills most of the viewport inside a bezel at ${width}x${height}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height });
+    await page.goto("/");
+    await inFrame(page, DESKTOP_UP);
+    await expect(page.locator("[data-desktop]")).toBeVisible();
+
+    const screenBox = page.locator("[data-screen-box]");
+    const bezel = page.locator("[data-laptop-bezel]");
+    const lip = page.locator("[data-laptop-lip]");
+    await expect(lip).toBeVisible();
+    await expect(page.locator("[data-laptop-deck]")).toBeHidden();
+
+    await expect(async () => {
+      const box = await rect(screenBox);
+      const outer = await rect(bezel);
+      // The screen is inside the viewport and fills most of one dimension.
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.y).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(width);
+      expect(box.y + box.height).toBeLessThanOrEqual(height);
+      expect(
+        box.height >= 0.85 * height || box.width >= 0.85 * width,
+        `the screen is ${box.width} x ${box.height} in ${width} x ${height}`,
+      ).toBe(true);
+
+      // The bezel surrounds it by a thin margin on every side.
+      for (const gap of [
+        box.x - outer.x,
+        box.y - outer.y,
+        outer.x + outer.width - (box.x + box.width),
+        outer.y + outer.height - (box.y + box.height),
+      ]) {
+        expect(gap).toBeGreaterThanOrEqual(4);
+        expect(gap).toBeLessThanOrEqual(40);
+      }
+
+      // No letterbox in the bezel: the box is as wide as the bezel's content.
+      const inner = await bezel.evaluate((el) => {
+        const css = getComputedStyle(el);
+        return (
+          el.clientWidth -
+          parseFloat(css.paddingLeft) -
+          parseFloat(css.paddingRight)
+        );
+      });
+      expect(Math.abs(box.width - inner)).toBeLessThanOrEqual(2);
+
+      // The lip is a thin strip under the bezel.
+      const edge = await rect(lip);
+      expect(edge.y).toBeGreaterThanOrEqual(outer.y + outer.height - 1);
+      expect(edge.height).toBeLessThanOrEqual(24);
+    }).toPass();
+  });
+}
+
+test("fullscreen is the viewport", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await inFrame(page, DESKTOP_UP);
+  await expect(page.locator("[data-desktop]")).toBeVisible();
+
+  await expect(async () => {
+    const box = await rect(page.locator("[data-screen-box]"));
+    expect(Math.abs(box.x)).toBeLessThanOrEqual(1);
+    expect(Math.abs(box.y)).toBeLessThanOrEqual(1);
+    expect(Math.abs(box.width - 390)).toBeLessThanOrEqual(1);
+    expect(Math.abs(box.height - 844)).toBeLessThanOrEqual(1);
+    // The bezel has no padding, so it is the screen.
+    const bezel = await rect(page.locator("[data-laptop-bezel]"));
+    expect(Math.abs(bezel.width - box.width)).toBeLessThanOrEqual(1);
+    expect(Math.abs(bezel.height - box.height)).toBeLessThanOrEqual(1);
+  }).toPass();
+  await expect(page.locator("[data-laptop-lip]")).toBeHidden();
+  await expect(page.locator("[data-laptop-webcam]")).toBeHidden();
+  await expect(page.locator("[data-laptop-deck]")).toBeHidden();
 });
