@@ -1,5 +1,11 @@
 import { act, render } from "@testing-library/react";
-import { StrictMode, useEffect, useRef, type RefObject } from "react";
+import {
+  StrictMode,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  type RefObject,
+} from "react";
 import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppApi } from "@/os/apps/types";
@@ -80,6 +86,39 @@ function Harness({
   );
 }
 
+/**
+ * The Harness inside a parent that reads the icons in its own layout effect.
+ * A parent's layout effects run after its children's and before any passive
+ * effect, and before the browser paints. So what `onLayout` gets is what the
+ * first paint would show. The Harness's own effects are what write the
+ * transforms, so they must be layout effects: as passive effects they would
+ * run after this one, and `onLayout` would see icons with no transform, which
+ * paint stacked at 0,0 for a frame. `render` wraps everything in `act`, which
+ * flushes passive effects too, so a test that reads after `render` cannot tell.
+ */
+function Probe({
+  api,
+  ids,
+  hold,
+  onLayout,
+}: {
+  api: WorldApi;
+  ids: readonly string[];
+  hold: Holder;
+  onLayout: (transforms: string[]) => void;
+}) {
+  const box = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const icons = box.current?.querySelectorAll<HTMLElement>("[data-id]") ?? [];
+    onLayout([...icons].map((el) => el.style.transform));
+  }, [ids, onLayout]);
+  return (
+    <div ref={box}>
+      <Harness api={api} ids={ids} hold={hold} />
+    </div>
+  );
+}
+
 const IDS = ["a", "b", "c", "d", "e"];
 const divs = (c: HTMLElement) => [
   ...c.querySelectorAll<HTMLElement>("[data-id]"),
@@ -118,6 +157,32 @@ describe("useSkillsWorld", () => {
     }
     // The icons drift: something moved.
     expect(transforms(container)).not.toEqual(first);
+  });
+
+  it("places every icon before the first paint, on mount and on a new list", () => {
+    const { api } = makeApi();
+    const hold = holder();
+    const seen: string[][] = [];
+    const onLayout = (transforms: string[]) => {
+      seen.push(transforms);
+    };
+    const view = render(
+      <Probe api={api} ids={IDS} hold={hold} onLayout={onLayout} />,
+    );
+    // On mount: the loop is created and the bodies are set in layout effects,
+    // so the icons are already placed when a parent's layout effect runs.
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toHaveLength(5);
+    for (const t of seen[0]) expect(t.startsWith("translate3d(")).toBe(true);
+
+    // A new list, as on a tab switch: the new icons mount with no transform and
+    // the bodies effect places them in the same commit.
+    view.rerender(
+      <Probe api={api} ids={["x", "y", "z"]} hold={hold} onLayout={onLayout} />,
+    );
+    expect(seen).toHaveLength(2);
+    expect(seen[1]).toHaveLength(3);
+    for (const t of seen[1]) expect(t.startsWith("translate3d(")).toBe(true);
   });
 
   it("sizes the world from api.bounds(), less the toolbar and footer", () => {
