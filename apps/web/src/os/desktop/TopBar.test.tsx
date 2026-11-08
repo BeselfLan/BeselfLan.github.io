@@ -97,6 +97,31 @@ describe("TopBar", () => {
       act(() => os.windows.minimizeWindow("about"));
       expect(focusedName()).toBe("");
     });
+
+    it("is hidden in fullscreen, where the title bar names the app", () => {
+      teardownBrowser();
+      setupBrowser({ fullscreen: true });
+      os.windows.setAppLookup(appLookup);
+      mount();
+      act(() => void os.windows.openApp("hello"));
+      // The window is open and focused; the bar still draws no name for it.
+      expect(useOS.getState().windows.mode).toBe("fullscreen");
+      expect(useOS.getState().windows.items.map((w) => w.appId)).toEqual([
+        "hello",
+      ]);
+      expect(focusedName()).toBeUndefined();
+      expect(q("[data-focused-app]")).toBeNull();
+      expect(q("[data-topbar]")!.textContent).not.toContain(
+        getApp("hello")!.name,
+      );
+    });
+  });
+
+  it("points Activities at the App Grid", () => {
+    mount();
+    expect(button("Activities").getAttribute("aria-controls")).toBe(
+      "desktop-app-grid",
+    );
   });
 
   it("drives Activities through the store", () => {

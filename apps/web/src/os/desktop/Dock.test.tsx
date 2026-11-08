@@ -241,6 +241,15 @@ describe("Dock", () => {
       expect(expanded()).toBe("false");
     });
 
+    it("controls the App Grid", () => {
+      mount();
+      expect(
+        screen
+          .getByRole("button", { name: "Show Applications" })
+          .getAttribute("aria-controls"),
+      ).toBe("desktop-app-grid");
+    });
+
     it("follows the store when something else toggles Activities", () => {
       mount();
       act(() => os.shell.setActivitiesOpen(true));

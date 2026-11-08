@@ -10,6 +10,7 @@ import type { ScreenMode } from "../store/windows";
 import { Icon } from "../ui/Icon";
 import { Tooltip } from "../ui/Tooltip";
 import { registerIconRectGetter } from "../window/iconRect";
+import { APP_GRID_ID } from "./appGrid";
 import { applyDockClick, dockEntries, dockMenu } from "./dock";
 
 // The dock is `--dock-w` (64) screen units wide on the left, or tall at the
@@ -137,6 +138,7 @@ export function Dock() {
             type="button"
             aria-label="Show Applications"
             aria-expanded={activitiesOpen}
+            aria-controls={APP_GRID_ID}
             className={BUTTON}
             onClick={() => os.shell.toggleActivities()}
           >
