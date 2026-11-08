@@ -17,6 +17,7 @@ import { initialMode, markBooted } from "./mode";
 import { useBootReducedMotion } from "./reducedMotion";
 import { createScriptStore, NO_LINES } from "./scriptStore";
 import { bootMachine, type BootStage } from "./stages";
+import { markBootStage } from "./trace";
 
 // The boot (plan 3.2, 3.3). On mount it starts a boot in the mode that
 // initialMode() picks and runs the stage clock; the screens come from
@@ -113,7 +114,11 @@ export function BootSequence() {
   // advance() moves one stage and sets no timer, so each stage sets the next.
   // The stage never waits on the line timers below.
   useEffect(() => {
-    const ms = bootMachine.durationFor(stage, bootContext(useOS.getState()));
+    const state = useOS.getState();
+    const ms = bootMachine.durationFor(stage, bootContext(state));
+    // The moment this stage's clock starts, on the app's own clock (#124). It
+    // is before the early return, so the stages with no timer are marked too.
+    markBootStage({ stage, mode: state.boot.mode, ms });
     if (ms === null) return;
     const timer = setTimeout(() => {
       // The last line's timer is due at this instant: draw it before leaving.
