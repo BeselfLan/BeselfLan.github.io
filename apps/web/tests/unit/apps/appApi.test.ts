@@ -1,5 +1,6 @@
 import { content } from "@beself/content";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { media } from "@/media/provider";
 import { createAppApi } from "@/os/apps/appApi";
 import { installShortcuts } from "@/os/input/shortcuts";
 import { focusedWindow, os, useOS } from "@/os/store";
@@ -218,10 +219,11 @@ describe("createAppApi", () => {
     expect(h).toHaveBeenCalledTimes(1);
   });
 
-  it("`content` and `media` are the providers", async () => {
+  it("`content` and `media` are the providers", () => {
     const a = api("a");
     expect(a.content.profile().name).toBe(content.profile.name);
-    await expect(a.media.resolve("x")).resolves.toBeNull();
-    expect(a.media.status()).toBe("unknown");
+    // The bound provider itself, so this holds for the placeholder and for
+    // the provider media/index.ts picks (#116), and nothing is fetched.
+    expect(a.media).toBe(media);
   });
 });
