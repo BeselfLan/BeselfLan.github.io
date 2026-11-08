@@ -92,7 +92,7 @@ function PopoverBody({
       aria-label={ariaLabel}
       tabIndex={-1}
       style={{ visibility: "hidden" }}
-      className={`pointer-events-auto absolute rounded-os-md bg-os-panel text-os-panel-fg shadow-os-popover outline-none${className ? ` ${className}` : ""}`}
+      className={`pointer-events-auto absolute rounded-os-md bg-os-panel text-os-panel-fg shadow-os-popover outline-none ${className ? ` ${className}` : ""}`}
     >
       {children}
     </div>
