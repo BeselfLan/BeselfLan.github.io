@@ -1,12 +1,14 @@
 "use client";
 
 import { MotionConfig, motion, useReducedMotion } from "motion/react";
-import { useRef, useSyncExternalStore } from "react";
+import { useRef, useState, useSyncExternalStore } from "react";
 import { topBar } from "../apps/extensions";
 import { getApp } from "../apps/registry";
 import { focusedWindow, os, useOS } from "../store";
 import { Button } from "../ui/Button";
+import type { AnchorRect } from "../ui/placement";
 import { REDUCED_MOTION } from "../window/windowMotion";
+import { CalendarPopover } from "./CalendarPopover";
 import { formatClock, useClock } from "./clock";
 import { useMediaStatus } from "./mediaStatus";
 import { BatteryIcon, NetworkIcon, VolumeIcon } from "./TrayIcons";
@@ -14,15 +16,24 @@ import { BatteryIcon, NetworkIcon, VolumeIcon } from "./TrayIcons";
 // The bar is `--top-bar-h` (32) screen units tall; it slides in from above.
 const SLIDE_FROM = -32;
 
+// Before the first click. Every open goes through a click that sets the anchor.
+const NO_ANCHOR: AnchorRect = { left: 0, top: 0, width: 0, height: 0 };
+
+// Client px, read from the button that was pressed.
+function anchorOf(el: HTMLElement): AnchorRect {
+  const { left, top, width, height } = el.getBoundingClientRect();
+  return { left, top, width, height };
+}
+
 /**
  * The 32-unit top bar (plan 4.2): Activities and the focused app's name on the
  * left, the clock in the middle, and on the right the registered tray items
  * and one "System menu" button holding the network, volume and battery.
  *
- * The clock and the system menu only set `shell.openPopover`; the popovers
- * come with #78, which passes `clockRef` and `powerRef` as `triggerRef` and
- * reads them for the anchor. At rest the bar has no transform, so a popover
- * anchors to plain client coordinates.
+ * The clock and the system menu set `shell.openPopover`, and the popovers
+ * render here, after the header: each gets its button as `triggerRef`, so the
+ * button's own press toggles it, and the button's rect as the anchor. At rest
+ * the bar has no transform, so an anchor is plain client coordinates.
  */
 export function TopBar() {
   const reducedSetting = useOS((s) => s.settings.reducedMotion);
@@ -36,7 +47,8 @@ export function TopBar() {
   const appId = useOS((s) => focusedWindow(s)?.appId ?? null);
   const appName = appId === null ? undefined : getApp(appId)?.name;
 
-  const clock = formatClock(useClock());
+  const now = useClock();
+  const clock = formatClock(now);
   const trayItems = useSyncExternalStore(
     topBar.subscribe,
     topBar.listTrayItems,
@@ -46,6 +58,7 @@ export function TopBar() {
 
   const clockRef = useRef<HTMLButtonElement>(null);
   const powerRef = useRef<HTMLButtonElement>(null);
+  const [calendarAnchor, setCalendarAnchor] = useState(NO_ANCHOR);
 
   return (
     <MotionConfig reducedMotion={REDUCED_MOTION[reducedSetting]}>
@@ -74,9 +87,11 @@ export function TopBar() {
           aria-haspopup="dialog"
           aria-expanded={openPopover === "calendar"}
           className="absolute left-1/2 -translate-x-1/2"
-          onClick={() =>
-            os.shell.setPopover(openPopover === "calendar" ? null : "calendar")
-          }
+          onClick={(e) => {
+            if (openPopover !== "calendar")
+              setCalendarAnchor(anchorOf(e.currentTarget));
+            os.shell.setPopover(openPopover === "calendar" ? null : "calendar");
+          }}
         >
           {/* The space is not drawn in a flex row; it keeps the name readable. */}
           <span>{clock.date}</span> <span>{clock.time}</span>
@@ -104,6 +119,12 @@ export function TopBar() {
           </Button>
         </div>
       </motion.header>
+      <CalendarPopover
+        open={openPopover === "calendar"}
+        anchor={calendarAnchor}
+        triggerRef={clockRef}
+        today={now}
+      />
     </MotionConfig>
   );
 }

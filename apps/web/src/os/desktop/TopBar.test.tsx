@@ -153,6 +153,73 @@ describe("TopBar", () => {
     });
   });
 
+  describe("the popovers close", () => {
+    // [label, trigger, store id, dialog name]
+    const popovers = [
+      [
+        "the calendar",
+        () => q("[data-clock]")!,
+        "calendar",
+        "Calendar and notifications",
+      ],
+    ] as const;
+    const dialogNamed = (name: string) =>
+      screen.queryByRole("dialog", { name });
+
+    // fireEvent.click does not move focus in jsdom, so focus the trigger the
+    // way a press does; the focus-return checks mean nothing without it.
+    function open(get: () => HTMLElement, id: string, name: string) {
+      const trigger = get();
+      trigger.focus();
+      fireEvent.click(trigger);
+      expect(shell().openPopover).toBe(id);
+      expect(dialogNamed(name)).not.toBeNull();
+      return trigger;
+    }
+
+    it.each(popovers)(
+      "%s closes on Esc and returns the focus",
+      (_, get, id, name) => {
+        mount();
+        const trigger = open(get, id, name);
+        fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+        expect(shell().openPopover).toBeNull();
+        expect(dialogNamed(name)).toBeNull();
+        expect(document.activeElement).toBe(trigger);
+      },
+    );
+
+    it.each(popovers)("%s closes on a press outside", (_, get, id, name) => {
+      mount();
+      open(get, id, name);
+      fireEvent.pointerDown(document.body);
+      expect(shell().openPopover).toBeNull();
+      expect(dialogNamed(name)).toBeNull();
+    });
+
+    it.each(popovers)(
+      "%s closes on its own button and stays closed",
+      (_, get, id, name) => {
+        mount();
+        const trigger = open(get, id, name);
+        // A real press is a pointerdown and then a click. Without triggerRef
+        // the pointerdown counts as outside, and the click reopens it.
+        fireEvent.pointerDown(trigger);
+        fireEvent.click(trigger);
+        expect(shell().openPopover).toBeNull();
+        expect(dialogNamed(name)).toBeNull();
+      },
+    );
+
+    it.each(popovers)("%s stays open on a press inside", (_, get, id, name) => {
+      mount();
+      open(get, id, name);
+      fireEvent.pointerDown(dialogNamed(name)!);
+      expect(shell().openPopover).toBe(id);
+      expect(dialogNamed(name)).not.toBeNull();
+    });
+  });
+
   describe("the network icon", () => {
     const status = () =>
       q("[data-network-status]")?.getAttribute("data-network-status");
