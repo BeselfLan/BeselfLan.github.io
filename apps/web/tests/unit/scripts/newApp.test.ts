@@ -35,7 +35,28 @@ afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
 });
 
-/** A temp root with the real template and registry copied in. */
+// The apps the registry had before anyone ran new-app.
+const V1_FOLDERS = ["projects", "skills", "video-player", "about", "_template"];
+
+/**
+ * The real registry without any app that new-app added, so these tests do not
+ * depend on which apps a checkout has already generated (after
+ * `npm run new-app terminal`, "terminal" is registered in the real file).
+ */
+function pristineRegistry(text: string): string {
+  const lines = text.split("\n");
+  const hello = lines.indexOf("  hello,");
+  const entries = lines.indexOf("  // new-app: entries");
+  return lines
+    .filter((line, i) => {
+      const imported = /^import \w+ from "@\/apps\/([\w-]+)";$/.exec(line);
+      if (imported) return V1_FOLDERS.includes(imported[1]);
+      return !(i > hello && i < entries);
+    })
+    .join("\n");
+}
+
+/** A temp root with the real template and the v1 registry copied in. */
 function fixture(): string {
   const root = mkdtempSync(join(tmpdir(), "new-app-"));
   made.push(root);
@@ -43,7 +64,12 @@ function fixture(): string {
     recursive: true,
   });
   mkdirSync(join(root, "apps/web/src/os/apps"), { recursive: true });
-  cpSync(join(WEB, "src/os/apps/registry.ts"), join(root, REGISTRY));
+  writeFileSync(
+    join(root, REGISTRY),
+    pristineRegistry(
+      readFileSync(join(WEB, "src/os/apps/registry.ts"), "utf8"),
+    ),
+  );
   return root;
 }
 
