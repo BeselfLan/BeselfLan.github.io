@@ -4,6 +4,7 @@ import { memo, useId, type ReactNode } from "react";
 import { focusedWindow, os, useOS } from "../store";
 import { TitleBar } from "./TitleBar";
 import { useDrag } from "./useDrag";
+import { WindowIdContext } from "./useWindowVisible";
 
 /** What a frame needs from an app: the capabilities and `window.chrome`. */
 export interface WindowChrome {
@@ -108,7 +109,9 @@ export const WindowFrame = memo(function WindowFrame({
           data-window-content=""
           className="relative isolate min-h-0 flex-1 overflow-hidden"
         >
-          <WindowContent id={id} renderContent={renderContent} />
+          <WindowIdContext value={id}>
+            <WindowContent id={id} renderContent={renderContent} />
+          </WindowIdContext>
         </div>
       </div>
     </div>
