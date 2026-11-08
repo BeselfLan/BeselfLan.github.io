@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { act, fireEvent, screen } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { os } from "@/os/store";
 import {
@@ -195,7 +195,7 @@ describe("WindowFrame", () => {
     expect(shadow("a")).toBe("shadow-os-popover");
   });
 
-  it("keeps the app mounted while minimised", () => {
+  it("keeps the app mounted while minimised", async () => {
     register({ id: "a" });
     mountLayer({ renderContent: renderCounter });
     open("a");
@@ -204,7 +204,9 @@ describe("WindowFrame", () => {
     expect(counter().textContent).toBe("n=2");
 
     act(() => os.windows.minimizeWindow("a"));
-    expect(style("a").visibility).toBe("hidden");
+    // Hidden once the animation has played, not before.
+    expect(style("a").visibility).toBe("");
+    await waitFor(() => expect(style("a").visibility).toBe("hidden"));
     expect(frameOf("a")!.isConnected).toBe(true);
     expect(cleanup).not.toHaveBeenCalled();
 
@@ -213,13 +215,15 @@ describe("WindowFrame", () => {
     expect(counter().textContent).toBe("n=2");
   });
 
-  it("unmounts the app on close", () => {
+  it("unmounts the app on close, after the fade", async () => {
     register({ id: "a" });
     mountLayer({ renderContent: renderCounter });
     open("a");
     fireEvent.click(titleBarOf("a")!.querySelector('[aria-label="Close"]')!);
+    expect(frameOf("a")).not.toBeNull();
+    expect(cleanup).not.toHaveBeenCalled();
+    await waitFor(() => expect(frameOf("a")).toBeNull());
     expect(cleanup).toHaveBeenCalledTimes(1);
-    expect(frameOf("a")).toBeNull();
   });
 
   it("puts the content in an isolate wrapper", () => {

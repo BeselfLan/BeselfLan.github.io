@@ -1,4 +1,4 @@
-import { act, screen } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { os } from "@/os/store";
 import {
@@ -33,13 +33,13 @@ describe("WindowLayer", () => {
     expect(frameOf("b")!.isConnected).toBe(true);
   });
 
-  it("renders no frame for a closed window", () => {
+  it("renders no frame for a closed window, once it has faded", async () => {
     register({ id: "a" }, { id: "b" });
     mountLayer();
     open("a");
     open("b");
     act(() => void os.windows.closeWindow("a"));
-    expect(ids()).toEqual(["b"]);
+    await waitFor(() => expect(ids()).toEqual(["b"]));
   });
 
   it("does not block the desktop", () => {
