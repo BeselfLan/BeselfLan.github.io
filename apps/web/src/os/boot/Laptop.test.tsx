@@ -1,14 +1,16 @@
 import { act, render } from "@testing-library/react";
 import { useEffect } from "react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Laptop } from "@/os/screen/Laptop";
 import { Screen } from "@/os/screen/Screen";
-import { useOS } from "@/os/store";
+import { os, useOS } from "@/os/store";
 import { stubMedia } from "../../../tests/unit/helpers/browser";
 import {
   setupBrowser,
   teardownBrowser,
 } from "../../../tests/unit/window/mountLayer";
+import { FULLSCREEN_QUERY } from "./mode";
+import { REDUCED_QUERY } from "./reducedMotion";
 import type { BootStage } from "./stages";
 
 // The tree in the browser is the real Screen, so a remount shows in the count.
@@ -206,5 +208,118 @@ describe("fullscreen is only the screen", () => {
       "var(--boot-laptop-bezel)",
     );
     expect(q("[data-laptop-lip]").hasAttribute("hidden")).toBe(false);
+  });
+});
+
+describe("the power button", () => {
+  const button = () =>
+    document.querySelector<HTMLElement>("[data-power-button]");
+  const shutDown = () =>
+    useOS.setState((s) => {
+      s.boot.mode = "fast";
+      s.boot.stage = "off";
+      s.boot.startedAt = 123;
+    });
+
+  it("is not there before the first boot", () => {
+    mount();
+    expect(useOS.getState().boot.stage).toBe("off");
+    expect(useOS.getState().boot.startedAt).toBeNull();
+    expect(button()).toBeNull();
+  });
+
+  it("is not there during or after a boot", () => {
+    mount();
+    setStage("lid-opening");
+    expect(button()).toBeNull();
+    setStage("desktop");
+    expect(button()).toBeNull();
+    setStage("shutting-down");
+    expect(button()).toBeNull();
+  });
+
+  it("after a shutdown it shows, takes focus and powers on in full", () => {
+    shutDown();
+    mount();
+    const power = button()!;
+    expect(power).not.toBeNull();
+    expect(power.textContent).toBe("Power on");
+    expect(document.activeElement).toBe(power);
+    // The wait is the lid's closing time, and the button is outside the camera.
+    expect(power.style.animationDelay).toBe("800ms");
+    expect(power.closest("[data-laptop-camera]")).toBeNull();
+    expect(laptop().lastElementChild).toBe(power);
+
+    act(() => power.click());
+    expect(useOS.getState().boot.stage).toBe("lid-opening");
+    // Fails with start("fast") and with send("powerOn"), which keep "fast".
+    expect(useOS.getState().boot.mode).toBe("full");
+    expect(button()).toBeNull();
+  });
+
+  it("comes after the Power Off that closed the lid", () => {
+    useOS.setState((s) => {
+      s.boot.stage = "desktop";
+      s.boot.startedAt = 123;
+    });
+    mount();
+    expect(button()).toBeNull();
+    act(() => os.boot.shutdown());
+    expect(button()).toBeNull();
+    setStage("off");
+    expect(laptop().getAttribute("data-lid")).toBe("closed");
+    expect(button()).not.toBeNull();
+    expect(document.activeElement).toBe(button());
+  });
+
+  it("is a real button with an accessible name", () => {
+    shutDown();
+    mount();
+    const power = button()!;
+    expect(power.tagName).toBe("BUTTON");
+    expect(power.getAttribute("type")).toBe("button");
+    expect(power.querySelector("svg")?.getAttribute("aria-hidden")).toBe(
+      "true",
+    );
+  });
+
+  it("shows at once in fullscreen", () => {
+    media = stubMedia(true);
+    shutDown();
+    mount();
+    expect(laptop().getAttribute("data-mode")).toBe("fullscreen");
+    expect(button()!.style.animationDelay).toBe("0ms");
+  });
+
+  it("shows at once in fullscreen when only the fullscreen query matches", () => {
+    vi.stubGlobal("matchMedia", (q: string) => ({
+      matches: q === FULLSCREEN_QUERY,
+      addEventListener() {},
+      removeEventListener() {},
+    }));
+    shutDown();
+    mount();
+    expect(laptop().getAttribute("data-mode")).toBe("fullscreen");
+    expect(button()!.style.animationDelay).toBe("0ms");
+  });
+
+  it("shows at once under reduced motion in laptop mode", () => {
+    os.settings.update({ reducedMotion: "on" });
+    shutDown();
+    mount();
+    expect(laptop().getAttribute("data-mode")).toBe("laptop");
+    expect(button()!.style.animationDelay).toBe("0ms");
+  });
+
+  it("waits for the lid when the system asks for less but the setting is off", () => {
+    vi.stubGlobal("matchMedia", (q: string) => ({
+      matches: q === REDUCED_QUERY,
+      addEventListener() {},
+      removeEventListener() {},
+    }));
+    os.settings.update({ reducedMotion: "off" });
+    shutDown();
+    mount();
+    expect(button()!.style.animationDelay).toBe("800ms");
   });
 });
