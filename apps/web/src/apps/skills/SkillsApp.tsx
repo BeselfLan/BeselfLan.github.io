@@ -1,7 +1,7 @@
 "use client";
 
 import { useReducedMotionConfig } from "motion/react";
-import { useId, useMemo, useRef, useState } from "react";
+import { useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { AppProps } from "@/os/apps/types";
 import { Button } from "@/os/ui/Button";
 import { Chip } from "@/os/ui/Chip";
@@ -37,10 +37,18 @@ import "./skills.css";
 // the visitor presses the toggle; the stage, and with it the loop, is not
 // rendered then, and the list's own Practices section replaces the footer.
 //
+// Escape closes the panel. It is heard on this component's root element, so
+// only while DOM focus is inside the app, and it is prevented, so the OS's own
+// Escape (which closes the App Grid, a menu or a popover) skips it. A shortcut
+// from `api.registerShortcut` would follow the focused window instead of DOM
+// focus, and would close the panel while the App Grid's search field has focus.
+// Projects does the same (#117).
+//
 // This file reaches the OS through `api` only, never calls `useScreen()`
 // (registry.test.ts renders every app outside a Screen), and never writes its
 // own args, its title or the URL: the URL keeps what the window was opened
-// with. It opens no other app itself; the panel does, for "Used in".
+// with. It opens no other app itself; the panel does, for "Used in". It
+// registers no shortcut and listens to no `window` or `document` event.
 
 export default function SkillsApp({ args, api }: AppProps<SkillsArgs>) {
   // The view the window's args ask for. A re-open with other args is a new
@@ -118,8 +126,24 @@ export default function SkillsApp({ args, api }: AppProps<SkillsArgs>) {
     else select(id);
   }
 
+  // Escape closes the panel while focus is anywhere in the app. It is ignored
+  // with nothing open, with a modifier, during text composition, and when a
+  // child already took it. `preventDefault` tells the OS's listener on `window`
+  // that the app used the key.
+  function keys(e: KeyboardEvent<HTMLDivElement>) {
+    if (e.key !== "Escape" || view.selectedId === null) return;
+    if (e.defaultPrevented || e.nativeEvent.isComposing) return;
+    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    e.preventDefault();
+    close();
+  }
+
   return (
-    <div ref={rootRef} className="flex h-full flex-col text-os-panel-fg">
+    <div
+      ref={rootRef}
+      className="flex h-full flex-col text-os-panel-fg"
+      onKeyDown={keys}
+    >
       {/* The window title already shows the name; the heading is for the page
           outline, and registry.test.ts looks for one named after the app. */}
       <h2 className="sr-only">Skills</h2>

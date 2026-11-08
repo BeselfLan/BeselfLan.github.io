@@ -2,8 +2,6 @@
 
 import { useReducedMotionConfig } from "motion/react";
 import {
-  useEffect,
-  useEffectEvent,
   useId,
   useLayoutEffect,
   useMemo,
@@ -26,17 +24,17 @@ import { CATEGORY_LABEL } from "./tabs";
 // It exists only while a skill is selected, so closing unmounts it. It slides
 // in with a CSS keyframe animation on mount (skills.css), which needs no state
 // and no effect, and the stage's wall slides with it (stageLoop.ts). Under
-// reduced motion it arrives at once. Escape goes through `api.registerShortcut`
-// for as long as the panel is mounted, so the OS runs it only while the Skills
-// window is focused and before its own defaults (docs/APPS.md section 12).
-// It uses neither `useScreen()` nor the Tooltip: both throw outside a Screen,
-// where registry.test.ts renders every app.
+// reduced motion it arrives at once. The panel has no key handling of its own:
+// Escape closes it from SkillsApp's root element, which hears the key only
+// while DOM focus is inside the app. It uses neither `useScreen()` nor the
+// Tooltip: both throw outside a Screen, where registry.test.ts renders every
+// app.
 
 export interface SkillPanelProps {
   /** The id that the opener's `aria-controls` names. */
   id: string;
   skillId: string;
-  api: Pick<AppApi, "content" | "openApp" | "registerShortcut">;
+  api: Pick<AppApi, "content" | "openApp">;
   onClose(): void;
   /** The fullscreen mode (D4): the panel covers the whole stage. */
   full?: boolean;
@@ -56,19 +54,6 @@ export function SkillPanel({
   const reduced = useReducedMotionConfig() ?? false;
   const headingId = useId();
   const asideRef = useRef<HTMLElement>(null);
-
-  // One registration for as long as the panel is mounted; the event reads the
-  // latest `onClose`.
-  const onEscape = useEffectEvent(() => onClose());
-  useEffect(
-    () =>
-      api.registerShortcut({
-        combo: "Escape",
-        description: "Close the skill panel",
-        handler: () => onEscape(),
-      }),
-    [api],
-  );
 
   // A new skill starts at the top of the text.
   useLayoutEffect(() => {

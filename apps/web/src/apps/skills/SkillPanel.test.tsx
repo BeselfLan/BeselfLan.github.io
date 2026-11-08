@@ -3,41 +3,25 @@ import { MotionConfig } from "motion/react";
 import type { ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { staticContent } from "@/content/static";
-import type { Shortcut } from "@/os/input/shortcuts";
 import { SkillPanel, type SkillPanelProps } from "./SkillPanel";
 
-// The panel with the real content and a fake api, outside a Screen. The fake
-// `registerShortcut` keeps the shortcut it is given and hands back an
-// unregister function the test can watch.
+// The panel with the real content and a fake api, outside a Screen. Escape is
+// not the panel's: SkillsApp's root hears it (SkillsApp.test.tsx).
 
 function setup(over: Partial<SkillPanelProps> = {}) {
-  const shortcuts: Shortcut[] = [];
-  const unregister = vi.fn();
-  const registerShortcut = vi.fn((s: Shortcut) => {
-    shortcuts.push(s);
-    return unregister;
-  });
   const openApp = vi.fn();
   const onClose = vi.fn();
   const props: SkillPanelProps = {
     id: "panel-1",
     skillId: "python",
-    api: { content: staticContent, openApp, registerShortcut },
+    api: { content: staticContent, openApp },
     onClose,
     ...over,
   };
   const el = (p: SkillPanelProps = props): ReactElement => (
     <SkillPanel {...p} />
   );
-  return {
-    props,
-    el,
-    shortcuts,
-    unregister,
-    registerShortcut,
-    openApp,
-    onClose,
-  };
+  return { props, el, openApp, onClose };
 }
 
 const skill = (id: string) =>
@@ -116,41 +100,16 @@ describe("SkillPanel", () => {
       expect(onClose).toHaveBeenCalledTimes(1);
     });
 
-    it("registers Escape through the api, and its handler calls onClose", () => {
-      const { el, onClose, registerShortcut, shortcuts } = setup();
-      render(el());
-      expect(registerShortcut).toHaveBeenCalledTimes(1);
-      expect(shortcuts[0].combo).toBe("Escape");
-      shortcuts[0].handler(new KeyboardEvent("keydown", { key: "Escape" }));
-      expect(onClose).toHaveBeenCalledTimes(1);
-    });
-
-    it("does not listen to the window itself", () => {
+    it("has no Escape handling of its own", () => {
       const { el, onClose } = setup();
       render(el());
+      // Escape belongs to the app, not the panel: neither the window nor the
+      // panel's own button closes it.
       fireEvent.keyDown(window, { key: "Escape" });
       fireEvent.keyDown(document.body, { key: "Escape" });
-      expect(onClose).not.toHaveBeenCalled();
-    });
-
-    it("unregisters on unmount", () => {
-      const { el, unregister } = setup();
-      const view = render(el());
-      expect(unregister).not.toHaveBeenCalled();
-      view.unmount();
-      expect(unregister).toHaveBeenCalledTimes(1);
-    });
-
-    it("registers once for the life of the panel, and calls the latest onClose", () => {
-      const { el, props, registerShortcut, shortcuts, unregister, onClose } =
-        setup();
-      const view = render(el());
-      const latest = vi.fn();
-      view.rerender(el({ ...props, onClose: latest, skillId: "java" }));
-      expect(registerShortcut).toHaveBeenCalledTimes(1);
-      expect(unregister).not.toHaveBeenCalled();
-      shortcuts[0].handler(new KeyboardEvent("keydown", { key: "Escape" }));
-      expect(latest).toHaveBeenCalledTimes(1);
+      fireEvent.keyDown(screen.getByRole("button", { name: "Close panel" }), {
+        key: "Escape",
+      });
       expect(onClose).not.toHaveBeenCalled();
     });
   });

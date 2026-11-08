@@ -4,7 +4,6 @@ import { Profiler, type ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { staticContent } from "@/content/static";
 import type { AppApi } from "@/os/apps/types";
-import type { Shortcut } from "@/os/input/shortcuts";
 import { WindowIdContext } from "@/os/window/useWindowVisible";
 import type { SkillsArgs } from "./index";
 import SkillsApp from "./SkillsApp";
@@ -805,13 +804,9 @@ describe("SkillsApp", () => {
     const OOP = staticContent.skill("oop")!.name;
     // Past PANEL_MS (250 ms): 17 frames of 16 ms.
     const settle = () => frames(17);
-    // The handler the newest registerShortcut call received.
-    const escape = (mocks: ReturnType<typeof makeApi>["mocks"]) => {
-      const [shortcut] = mocks.registerShortcut.mock.calls.at(-1) as [Shortcut];
-      act(() => {
-        shortcut.handler(new KeyboardEvent("keydown", { key: "Escape" }));
-      });
-    };
+    // fireEvent returns false when a handler called preventDefault.
+    const escape = (el: Element, over: object = {}) =>
+      fireEvent.keyDown(el, { key: "Escape", ...over });
 
     it("click opens the panel", () => {
       const { api } = makeApi();
@@ -957,25 +952,54 @@ describe("SkillsApp", () => {
       expect(document.activeElement).toBe(icon(container, "git"));
     });
 
-    it("Escape closes, through the handler the panel registered", () => {
+    it("Escape on the app root", () => {
       const { api, mocks } = makeApi();
       const { container } = render(ui(api));
-      expect(mocks.registerShortcut).not.toHaveBeenCalled();
-      click(icon(container, "python"));
-      expect(mocks.registerShortcut).toHaveBeenCalledTimes(1);
-      focus(screen.getByRole("button", { name: "Close panel" }));
-      escape(mocks);
+      const python = () => icon(container, "python");
+      click(python());
+      expect(panel(container)).not.toBeNull();
+
+      // 1. Outside the app (the App Grid's search field, the page body): not
+      // the app's, so it is not prevented and the panel stays.
+      expect(escape(document.body)).toBe(true);
+      expect(panel(container)).not.toBeNull();
+
+      // 2. With a modifier, or during text composition: ignored.
+      for (const mod of ["ctrlKey", "altKey", "metaKey", "shiftKey"]) {
+        expect(escape(python(), { [mod]: true }), mod).toBe(true);
+      }
+      expect(escape(python(), { isComposing: true })).toBe(true);
+      expect(panel(container)).not.toBeNull();
+
+      // 3. From an icon: prevented, so the OS skips it, and the panel closes.
+      expect(escape(python())).toBe(false);
       expect(panel(container)).toBeNull();
-      expect(selected(container)).toEqual([]);
-      expect(document.activeElement).toBe(icon(container, "python"));
+      for (const b of icons(container)) {
+        expect(b.getAttribute("aria-expanded")).toBe("false");
+      }
+
+      // 4. From inside the panel: prevented, and focus goes back to the opener.
+      click(python());
+      const close = screen.getByRole("button", { name: "Close panel" });
+      focus(close);
+      expect(escape(close)).toBe(false);
+      expect(panel(container)).toBeNull();
+      expect(document.activeElement).toBe(python());
+
+      // 5. With nothing open it is not the app's.
+      expect(escape(python())).toBe(true);
+
+      // 6. It never went through the OS's shortcuts.
+      expect(mocks.registerShortcut).not.toHaveBeenCalled();
     });
 
-    it("returns focus to the practice chip that opened the panel", () => {
-      const { api, mocks } = makeApi();
+    it("Escape returns focus to the practice chip that opened the panel", () => {
+      const { api } = makeApi();
       const { container } = render(ui(api));
       fireEvent.click(practice(AGILE));
-      focus(screen.getByRole("button", { name: "Close panel" }));
-      escape(mocks);
+      const close = screen.getByRole("button", { name: "Close panel" });
+      focus(close);
+      expect(escape(close)).toBe(false);
       expect(panel(container)).toBeNull();
       expect(document.activeElement).toBe(practice(AGILE));
     });
@@ -1046,15 +1070,17 @@ describe("SkillsApp", () => {
       });
 
       it("returns focus to the card that opened the panel", () => {
-        const { api, mocks } = makeApi();
+        const { api } = makeApi();
         const { container } = render(ui(api));
         fireEvent.click(toggle());
         const card = container.querySelector<HTMLElement>(
           '[data-skill-card="java"]',
         )!;
         fireEvent.click(card);
-        focus(screen.getByRole("button", { name: "Close panel" }));
-        escape(mocks);
+        const close = screen.getByRole("button", { name: "Close panel" });
+        focus(close);
+        expect(escape(close)).toBe(false);
+        expect(panel(container)).toBeNull();
         expect(document.activeElement).toBe(card);
       });
 
@@ -1139,13 +1165,9 @@ describe("SkillsApp", () => {
       "setTitle",
       "openApp",
       "notify",
+      "registerShortcut",
     ] as const) {
       expect(mocks[name], name).not.toHaveBeenCalled();
-    }
-    // The only shortcut it registers is the panel's Escape.
-    expect(mocks.registerShortcut).toHaveBeenCalled();
-    for (const [shortcut] of mocks.registerShortcut.mock.calls) {
-      expect(shortcut.combo).toBe("Escape");
     }
   });
 });

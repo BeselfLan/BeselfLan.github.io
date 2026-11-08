@@ -268,7 +268,10 @@ test("click Python opens the panel, the wall clears it, Escape closes it", async
   });
   expect(behind).toEqual([]);
 
-  // Escape, with the Skills window focused, closes the panel and not the window.
+  // Escape is the app's only while DOM focus is inside it. Chromium focuses a
+  // button on mousedown and the stage does not prevent that, so the icon that
+  // was clicked has the focus. It closes the panel and not the window.
+  await expect(icon(page, "python")).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(panel(page)).toHaveCount(0);
   await expect(win(page)).toBeVisible();
