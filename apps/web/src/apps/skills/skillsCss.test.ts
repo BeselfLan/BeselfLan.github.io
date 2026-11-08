@@ -36,6 +36,8 @@ describe("skills.css", () => {
         "skills-label",
         "skills-panel",
         "skills-panel-enter",
+        "skills-list-grid",
+        "skills-card",
       ]),
     );
     expect([...keyframeNames].sort()).toEqual([
@@ -68,7 +70,12 @@ describe("skills.css", () => {
 
   it("styles every skills- class the components name", () => {
     const used = new Set<string>();
-    for (const file of ["SkillsStage.tsx", "SkillsApp.tsx", "SkillPanel.tsx"]) {
+    for (const file of [
+      "SkillsStage.tsx",
+      "SkillsApp.tsx",
+      "SkillPanel.tsx",
+      "SkillList.tsx",
+    ]) {
       for (const m of read(file).matchAll(/["' ](skills-[\w-]+)/g)) {
         used.add(m[1]);
       }
