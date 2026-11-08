@@ -18,6 +18,16 @@ test.afterEach(() => {
   expect(errors).toEqual([]);
 });
 
+// An opt-in CPU throttle (#124): BOOT_CPU_THROTTLE=4 slows the page's main
+// thread four times through the DevTools protocol, as a stand-in for a slow
+// CI runner. Unset, nothing changes.
+const THROTTLE = Number(process.env.BOOT_CPU_THROTTLE ?? "1");
+test.beforeEach(async ({ page }) => {
+  if (!(THROTTLE > 1)) return;
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Emulation.setCPUThrottlingRate", { rate: THROTTLE });
+});
+
 // The first request compiles the route, and that must not count against the
 // timings below.
 test.beforeAll(async ({ browser }) => {
