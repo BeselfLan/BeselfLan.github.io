@@ -12,13 +12,5 @@ export interface MediaProvider {
   status(): MediaStatus;
 }
 
-/**
- * What `AppApi.media` and the tray read. A placeholder until the media child
- * (#18) swaps in the provider that `media/index.ts` picks from the environment
- * (plan 4.5): it resolves nothing and its status is unknown. `media/**` is
- * shared with app-projects so that swap needs no change to the OS.
- */
-export const media: MediaProvider = {
-  resolve: () => Promise.resolve(null),
-  status: () => "unknown",
-};
+/** The provider media/index.ts picks from NEXT_PUBLIC_API_URL (plan 4.5, D11). */
+export { media } from "./index";
