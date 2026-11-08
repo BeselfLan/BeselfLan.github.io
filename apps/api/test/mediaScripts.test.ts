@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -5,10 +6,11 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { MediaManifestSchema } from "../src/contentSchema.ts";
 import { main, type Io } from "../../../scripts/media/manifest-cli.mts";
@@ -249,4 +251,173 @@ describe("manifest-cli main", () => {
     expect(result.err[0]).toMatch(/^manifest: /);
     expect(existsSync(join(dir, "manifest.json"))).toBe(false);
   });
+});
+
+// The scripts, run as a person would run them.
+const root = join(import.meta.dirname, "../../..");
+const has = (tool: string) =>
+  spawnSync("sh", ["-c", `command -v ${tool}`]).status === 0;
+
+// Node first on the PATH, so the scripts run the same Node as the tests.
+function script(
+  name: string,
+  args: string[],
+  env: Record<string, string> = {},
+) {
+  return spawnSync("bash", [join(root, "scripts/media", name), ...args], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PATH: `${dirname(process.execPath)}:${process.env.PATH}`,
+      ...env,
+    },
+  });
+}
+
+function ffprobe(file: string) {
+  const out = spawnSync(
+    "ffprobe",
+    [
+      "-v",
+      "error",
+      "-select_streams",
+      "v:0",
+      "-show_entries",
+      "stream=codec_name,pix_fmt,width,height",
+      "-of",
+      "json",
+      file,
+    ],
+    { encoding: "utf8" },
+  );
+  return (JSON.parse(out.stdout) as { streams: Record<string, unknown>[] })
+    .streams[0];
+}
+
+/** A one-second 63x35 GIF. Odd sides, so the even-size scale matters. */
+function makeGif(dir: string): string {
+  const gif = join(dir, "src.gif");
+  const made = spawnSync(
+    "ffmpeg",
+    [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-f",
+      "lavfi",
+      "-i",
+      "testsrc=size=63x35:rate=10:duration=1",
+      gif,
+    ],
+    { encoding: "utf8" },
+  );
+  expect(made.status, made.stderr).toBe(0);
+  return gif;
+}
+
+describe.skipIf(!has("ffmpeg") || !has("ffprobe"))("convert.sh", () => {
+  it("writes mp4, webm and jpg and appends a manifest entry that passes the shared schema", () => {
+    const work = tempDir();
+    const out = join(work, "media");
+    const run = script("convert.sh", [makeGif(work), "demo", out]);
+    expect(run.status, run.stderr).toBe(0);
+
+    // Odd 63x35 input: both renditions are scaled to even sides, in yuv420p.
+    expect(ffprobe(join(out, "demo.mp4"))).toMatchObject({
+      codec_name: "h264",
+      pix_fmt: "yuv420p",
+      width: 62,
+      height: 34,
+    });
+    expect(ffprobe(join(out, "demo.webm"))).toMatchObject({
+      codec_name: "vp9",
+      pix_fmt: "yuv420p",
+      width: 62,
+      height: 34,
+    });
+    expect(ffprobe(join(out, "demo.jpg"))).toMatchObject({
+      width: 62,
+      height: 34,
+    });
+
+    const manifest = MediaManifestSchema.parse(
+      JSON.parse(readFileSync(join(out, "manifest.json"), "utf8")),
+    );
+    expect(manifest).toHaveLength(1);
+    expect(manifest[0]).toMatchObject({
+      id: "demo",
+      sources: [
+        { src: "demo.webm", type: "video/webm; codecs=vp9" },
+        { src: "demo.mp4", type: "video/mp4" },
+      ],
+      poster: "demo.jpg",
+      width: 62,
+      height: 34,
+    });
+    expect(manifest[0].durationMs).toBeGreaterThan(900);
+    expect(manifest[0].durationMs).toBeLessThan(1100);
+    expect(checkManifest(join(out, "manifest.json"))).toEqual([]);
+
+    // The API runs as another user: files are readable and no temp folder stays.
+    for (const name of ["demo.mp4", "demo.webm", "demo.jpg", "manifest.json"]) {
+      expect(statSync(join(out, name)).mode & 0o777).toBe(0o644);
+    }
+    expect(readdirSync(out).sort()).toEqual([
+      "demo.jpg",
+      "demo.mp4",
+      "demo.webm",
+      "manifest.json",
+    ]);
+  }, 60_000);
+
+  it("re-running an id replaces its entry", () => {
+    const work = tempDir();
+    const out = join(work, "media");
+    const gif = makeGif(work);
+    for (const id of ["a", "b", "a"]) {
+      const run = script("convert.sh", [gif, id, out]);
+      expect(run.status, run.stderr).toBe(0);
+    }
+    expect(readManifest(join(out, "manifest.json")).map((e) => e.id)).toEqual([
+      "a",
+      "b",
+    ]);
+  }, 120_000);
+
+  it("a bad id stops before any work", () => {
+    const work = tempDir();
+    const out = join(work, "never");
+    const run = script("convert.sh", [makeGif(work), "Bad_Id", out]);
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toContain("Bad_Id");
+    expect(existsSync(out)).toBe(false);
+  }, 60_000);
+
+  it("a missing input stops before any work", () => {
+    const out = join(tempDir(), "never");
+    const run = script("convert.sh", [
+      join(tempDir(), "nope.gif"),
+      "demo",
+      out,
+    ]);
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toContain("nope.gif");
+    expect(existsSync(out)).toBe(false);
+  }, 60_000);
+
+  it("a failed encode leaves nothing behind", () => {
+    const work = tempDir();
+    const out = goodFolder("old");
+    const manifest = join(out, "manifest.json");
+    const before = readFileSync(manifest);
+    const files = readdirSync(out).sort();
+
+    const bad = join(work, "not-a-video.gif");
+    writeFileSync(bad, "this is text");
+    const run = script("convert.sh", [bad, "demo", out]);
+
+    expect(run.status).not.toBe(0);
+    expect(readdirSync(out).sort()).toEqual(files);
+    expect(readFileSync(manifest).equals(before)).toBe(true);
+  }, 60_000);
 });
