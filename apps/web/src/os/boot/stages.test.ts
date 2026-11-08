@@ -175,22 +175,47 @@ describe("events", () => {
       );
     }
   });
+
+  it("lock enters login from the desktop, and from nowhere else", () => {
+    for (const stage of Object.keys(BOOT_STAGES) as BootStage[]) {
+      expect(bootMachine.stageForEvent("lock", stage), `from ${stage}`).toBe(
+        stage === "desktop" ? "login" : null,
+      );
+    }
+  });
+
+  it.each([
+    ["full", 400],
+    ["fast", 400],
+    ["skip", 0],
+  ] as const)(
+    "after a lock, login leads back through desktop-enter (%s, %i ms)",
+    (mode, total) => {
+      const w = walk(bootMachine, "login", ctx(mode, { showLogin: true }));
+      expect(w.path).toEqual(["login", "desktop-enter", "desktop"]);
+      expect(w.total).toBe(total);
+    },
+  );
 });
 
 describe("one entry adds a stage", () => {
+  // stageForEvent enters the first entry, in table order, that lists the
+  // event from the current stage, so the added entry uses an event the real
+  // table does not have.
   const machine = createStageMachine({
     ...BOOT_STAGES,
-    locked: {
+    screensaver: {
       duration: { full: null, fast: null, skip: null },
       onEnter: () => {},
       next: "desktop",
-      enteredBy: { lock: ["desktop"] },
+      enteredBy: { idle: ["desktop"] },
     },
   });
 
   it("is reachable and walkable without touching other entries", () => {
-    expect(machine.stageForEvent("lock", "desktop")).toBe("locked");
-    expect(machine.nextStage("locked", ctx("full"))).toBe("desktop");
-    expect("locked" in BOOT_STAGES).toBe(false);
+    expect(bootMachine.stageForEvent("idle", "desktop")).toBeNull();
+    expect(machine.stageForEvent("idle", "desktop")).toBe("screensaver");
+    expect(machine.nextStage("screensaver", ctx("full"))).toBe("desktop");
+    expect("screensaver" in BOOT_STAGES).toBe(false);
   });
 });

@@ -56,6 +56,10 @@ export const BOOT_STAGES = {
     duration: { full: null, fast: null, skip: null },
     onEnter: noop,
     next: "desktop-enter",
+    // Lock in the System menu (plan 4.2) enters login from the desktop.
+    // `when` applies only to walks, so a lock enters login in any mode.
+    // The System menu sends "lock" only while settings.showLogin is on.
+    enteredBy: { lock: ["desktop"] },
     when: (ctx) => ctx.showLogin && ctx.mode !== "skip",
   },
   "desktop-enter": {

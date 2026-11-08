@@ -911,4 +911,59 @@ test.describe("the login stage", () => {
     await page.keyboard.press("Enter");
     await inFrame(page, DESKTOP_UP, 2000);
   });
+
+  test("with showLogin on, Lock shows the login card and the card brings the desktop back", async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem(
+        "beselfos:settings",
+        JSON.stringify({
+          state: { settings: { showLogin: true } },
+          version: 0,
+        }),
+      );
+    });
+    // Skip passes over the login on the way in, so the only login is Lock's.
+    await page.goto("/?app=hello&boot=skip");
+    await inFrame(page, DESKTOP_UP);
+    await expect(hello(page)).toBeVisible();
+
+    await choose(page, "Lock");
+    await expect(page.locator('[data-boot-stage="login"]')).toBeVisible();
+    const card = page.getByRole("button", {
+      name: `${profile.name} Click to log in`,
+    });
+    await expect(card).toBeFocused();
+    await expect(page.locator("[data-desktop]")).toHaveCount(0);
+
+    await card.click();
+    await inFrame(page, DESKTOP_UP, 2000);
+    await expect(hello(page)).toBeVisible();
+
+    // Lock locked, so it pushed no notice.
+    await page.locator("[data-clock]").click();
+    const calendar = page.getByRole("dialog", {
+      name: "Calendar and notifications",
+    });
+    await expect(calendar).toBeVisible();
+    await expect(calendar).not.toContainText("Locking is not available.");
+  });
+
+  test("with showLogin off, Lock leaves the desktop up and lists the notice", async ({
+    page,
+  }) => {
+    await page.goto("/?app=hello&boot=skip");
+    await inFrame(page, DESKTOP_UP);
+    await expect(hello(page)).toBeVisible();
+
+    await choose(page, "Lock");
+    // The clock is part of the desktop, so reaching it shows Lock did not lock.
+    await page.locator("[data-clock]").click();
+    await expect(
+      page.getByRole("list", { name: "Notifications" }),
+    ).toContainText("Locking is not available.");
+    await expect(page.locator("[data-boot-stage]")).toHaveCount(0);
+    await expect(hello(page)).toBeVisible();
+  });
 });
