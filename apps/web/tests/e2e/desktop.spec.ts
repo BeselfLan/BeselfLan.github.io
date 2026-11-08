@@ -1,9 +1,10 @@
 import { content } from "@beself/content";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
-// The desktop: top bar, wallpaper, clock, popovers and the dock. Every test
-// starts from openDesktop, which returns only once the boot is over. The
-// dock's tests open apps by clicking their icons.
+// The desktop: top bar, wallpaper, clock, popovers, the dock, the App Grid and
+// the desktop's right-click menu. Every test starts from openDesktop, which
+// returns only once the boot is over. The dock's tests open apps by clicking
+// their icons.
 //
 // The name and tagline come from the content package, so the test reads them
 // from there too.
@@ -392,4 +393,160 @@ test.describe("the dock", () => {
       page.getByRole("list", { name: "Notifications" }),
     ).toContainText("Unpinning apps is coming soon.");
   });
+});
+
+test.describe("the App Grid", () => {
+  const grid = (page: Page) =>
+    page.getByRole("dialog", { name: "Applications" });
+  const activities = (page: Page) =>
+    page.getByRole("button", { name: "Activities" });
+  const showApplications = (page: Page) =>
+    page.getByRole("button", { name: "Show Applications" });
+
+  test('search "ski" launches Skills', async ({ page }) => {
+    await openDesktop(page);
+    await activities(page).click();
+    await expect(grid(page)).toBeVisible();
+    await expect(
+      grid(page).getByRole("searchbox", { name: "Search apps" }),
+    ).toBeFocused();
+
+    // Typed with the keyboard and not filled, so a field without focus fails.
+    await page.keyboard.type("ski");
+    await expect(
+      grid(page).getByRole("button", { name: "Skills" }),
+    ).toBeVisible();
+    await expect(
+      grid(page).getByRole("button", { name: "Projects" }),
+    ).toHaveCount(0);
+
+    await page.keyboard.press("Enter");
+    await expect(grid(page)).toBeHidden();
+    // By its id only: the Skills app draws its own content.
+    const win = page.locator('[data-window-id="skills"]');
+    await expect(win).toBeVisible();
+    await expect(win).toHaveAttribute("data-focused", "");
+  });
+
+  test("Show Applications opens the grid below the top bar; Esc and Super close it", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await openDesktop(page);
+    await showApplications(page).click();
+    await expect(grid(page)).toBeVisible();
+    await expect(activities(page)).toHaveAttribute("aria-expanded", "true");
+
+    // The bar slides in over 300 ms and the grid fades in over 150 ms, so
+    // check the settled boxes.
+    await expect(async () => {
+      const box = await rect(page.locator("[data-screen-box]"));
+      const bar = await rect(page.locator("[data-topbar]"));
+      const g = await rect(grid(page));
+      expect(Math.abs(g.y - (bar.y + bar.height))).toBeLessThanOrEqual(1);
+      expect(
+        Math.abs(g.y + g.height - (box.y + box.height)),
+      ).toBeLessThanOrEqual(1);
+      // Plan 9: a blur above 12 px is too heavy for Safari.
+      const blur = await grid(page).evaluate(
+        (el) => getComputedStyle(el).backdropFilter,
+      );
+      expect(blur).toBe("blur(12px)");
+    }).toPass();
+
+    await page.keyboard.press("Escape");
+    await expect(grid(page)).toBeHidden();
+    await expect(activities(page)).toHaveAttribute("aria-expanded", "false");
+
+    // The grid covers the dock while it is open, so this is only possible
+    // once Esc has closed it.
+    await showApplications(page).click();
+    await expect(grid(page)).toBeVisible();
+    await page.keyboard.press("Meta");
+    await expect(grid(page)).toBeHidden();
+    await expect(activities(page)).toHaveAttribute("aria-expanded", "false");
+  });
+});
+
+test("right-click on the desktop shows its menu, opens upwards low down, and Esc closes it", async ({
+  page,
+}) => {
+  // The scale is about 0.889 here and the box is about 60 px from the left,
+  // so a point converted twice, or not at all, would land visibly off.
+  await page.setViewportSize({ width: 1400, height: 800 });
+  await openDesktop(page);
+  const box = await rect(page.locator("[data-screen-box]"));
+  const s = box.width / 1440;
+  const menu = page.getByRole("menu");
+  const item = (name: string) => menu.getByRole("menuitem", { name });
+  // A point on the bare wallpaper, in screen units from the box's corner.
+  const at = (x: number, y: number) => ({
+    x: box.x + x * s,
+    y: box.y + y * s,
+  });
+
+  const high = at(700, 300);
+  await page.mouse.click(high.x, high.y, { button: "right" });
+  await expect(menu).toBeVisible();
+  await expect(menu.getByRole("menuitem")).toHaveText([
+    "Change Background...",
+    "Display Settings",
+    "Open in Terminal",
+  ]);
+  await expect(item("Open in Terminal")).toBeDisabled();
+  await expect(item("Change Background...")).toBeEnabled();
+  // At the pointer, with the popover's 4 unit gap below it.
+  await expect(async () => {
+    const m = await rect(menu);
+    expect(Math.abs(m.x - high.x)).toBeLessThanOrEqual(2);
+    expect(Math.abs(m.y - (high.y + 4 * s))).toBeLessThanOrEqual(2);
+  }).toPass();
+
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+
+  // Low on the screen it opens upwards, as the dock's menu does.
+  const low = at(700, 820);
+  await page.mouse.click(low.x, low.y, { button: "right" });
+  await expect(menu).toBeVisible();
+  await expect(async () => {
+    const m = await rect(menu);
+    expect(m.y + m.height).toBeLessThanOrEqual(low.y + 1);
+  }).toPass();
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+
+  await page.mouse.click(high.x, high.y, { button: "right" });
+  await item("Change Background...").click();
+  await expect(menu).toHaveCount(0);
+  await expect(page.locator('[data-wallpaper="orange"]')).toBeVisible();
+
+  await page.mouse.click(high.x, high.y, { button: "right" });
+  await item("Display Settings").click();
+  await expect(menu).toHaveCount(0);
+  await page.locator("[data-clock]").click();
+  await expect(page.getByRole("list", { name: "Notifications" })).toContainText(
+    "Display settings are coming soon.",
+  );
+});
+
+test("the focused app's name stays clear of the clock at 390 px", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openDesktop(page);
+  await dockIcon(page, "about").click();
+  await expect(page.locator('[data-window-id="about"]')).toBeVisible();
+
+  // The bar draws no name in fullscreen mode, where the window's title bar
+  // names the app. Either that, or a name that clears the clock: #77's name
+  // spanned x 102 to 157 under a clock from x 129.5 to 260.5.
+  await expect(async () => {
+    const name = page.locator("[data-focused-app]");
+    if ((await name.count()) === 0) return;
+    const n = await rect(name);
+    const c = await rect(page.locator("[data-clock]"));
+    const apart = n.x + n.width <= c.x || c.x + c.width <= n.x;
+    expect(apart).toBe(true);
+  }).toPass();
 });
