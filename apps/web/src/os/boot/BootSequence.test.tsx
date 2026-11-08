@@ -3,9 +3,12 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { os, useOS } from "@/os/store";
 import {
+  open,
+  register,
   setupBrowser,
   teardownBrowser,
 } from "../../../tests/unit/window/mountLayer";
+import { LOCK_NOTICE, power } from "../desktop/power";
 import { BootSequence } from "./BootSequence";
 import { BOOTED_KEY } from "./mode";
 import { REDUCED_QUERY } from "./reducedMotion";
@@ -818,5 +821,70 @@ describe("the login stage", () => {
     }
     expect(stage()).toBe("desktop");
     expect(seen.has("login")).toBe(false);
+  });
+
+  // Lock (plan 4.2) on the real table, through the System menu's own action.
+  const loginCard = () =>
+    screen.getByRole("button", { name: /Click to log in$/ });
+  const windowItems = () => useOS.getState().windows.items;
+  const notices = () => useOS.getState().notifications.items;
+
+  /** A full boot with the login off, one window, then Lock with the login on. */
+  function lockFromDesktop() {
+    render(<BootSequence />);
+    toDesktop();
+    // The full boot printed the log, so the card must clear the index for
+    // the fade out to start from black.
+    expect(boot().lineIndex).toBeGreaterThan(0);
+    register({ id: "notes" });
+    open("notes");
+    const before = windowItems();
+    expect(before).toHaveLength(1);
+    act(() => {
+      os.settings.update({ showLogin: true });
+    });
+    act(() => {
+      power.lock();
+    });
+    return before;
+  }
+
+  it("Lock from the desktop shows the login card and waits", () => {
+    const before = lockFromDesktop();
+    expect(stage()).toBe("login");
+    expect(root()?.getAttribute("data-boot-stage")).toBe("login");
+    expect(notices()).toEqual([]);
+    expect(document.activeElement).toBe(loginCard());
+    expect(skipButton()).toBeNull();
+
+    walk(60_000);
+    press.key();
+    press.pointer();
+    expect(stage()).toBe("login");
+    expect(windowItems()).toEqual(before);
+  });
+
+  it("the card brings the desktop back", () => {
+    const before = lockFromDesktop();
+    fireEvent.click(loginCard());
+    expect(stage()).toBe("desktop-enter");
+    expect(boot().lineIndex).toBe(0);
+    expect(lineEls()).toHaveLength(0);
+    walk(400);
+    expect(stage()).toBe("desktop");
+    expect(windowItems()).toEqual(before);
+  });
+
+  it("with showLogin off, Lock only pushes the notice", () => {
+    render(<BootSequence />);
+    toDesktop();
+    // The default, written out as the precondition, not as a seed.
+    expect(useOS.getState().settings.showLogin).toBe(false);
+    act(() => {
+      power.lock();
+    });
+    expect(notices()).toEqual([expect.objectContaining(LOCK_NOTICE)]);
+    expect(stage()).toBe("desktop");
+    expect(root()).toBeNull();
   });
 });

@@ -1,0 +1,117 @@
+/*
+ * The Skills stage (plan 6.4, 6.6, D13, D21 as amended). A global stylesheet
+ * with skills- names, as boot.css does with boot- and carousel.css with
+ * projects-: a CSS Module comes out unscoped for now (#86). The rules are
+ * unlayered, so they beat Tailwind's reset in @layer base (the button's
+ * padding and border). Plain CSS: no @apply. Layout (position, flex, overflow)
+ * stays with the Tailwind classes on the elements.
+ *
+ * The loop owns every icon's `transform` (stageLoop.ts), so nothing here sets
+ * one on `.skills-icon`. The hover scale and the selection ring go on the face
+ * inside it, and the label sits beside the face. The hover scale and the fade
+ * length arrive as custom properties set inline on the stage, so layout.ts
+ * stays their one source.
+ */
+
+/* The stage holds the icons. The pointer drives them, not the page's scroll. */
+.skills-stage {
+  touch-action: none;
+  user-select: none;
+}
+
+/*
+ * One wrapper per tab. Its key changes with the set of ids, so a switch
+ * remounts it and the new icons fade in together.
+ */
+.skills-set {
+  position: absolute;
+  inset: 0;
+}
+
+.skills-set-enter {
+  animation: skills-fade-in var(--skills-fade-ms) ease-out both;
+}
+
+@keyframes skills-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* An icon sits at the stage's top-left corner; the loop translates it. */
+.skills-icon {
+  position: absolute;
+  left: 0;
+  top: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  cursor: grab;
+  touch-action: none;
+}
+
+.skills-icon:active {
+  cursor: grabbing;
+  z-index: 2;
+}
+
+.skills-icon:hover,
+.skills-icon:focus-visible {
+  z-index: 1;
+}
+
+.skills-icon:focus-visible {
+  outline: 2px solid var(--os-accent);
+  outline-offset: 3px;
+}
+
+/*
+ * The emblem. The pointer's grow and the selection ring live here. A flex box
+ * and not a block: an inline emblem in a block would sit on a text baseline
+ * and make the box taller than the disc, and the ring would not hug it.
+ */
+.skills-face {
+  display: flex;
+  border-radius: 50%;
+  transition: transform 120ms ease-out;
+}
+
+.skills-icon:hover .skills-face,
+.skills-icon:focus-visible .skills-face {
+  transform: scale(var(--skills-hover-scale));
+}
+
+.skills-icon[data-selected] .skills-face {
+  box-shadow: 0 0 0 3px var(--os-accent);
+}
+
+/*
+ * The name. It is the button's accessible name, so it is hidden by opacity
+ * and never by display.
+ */
+.skills-label {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 4px;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  background: rgb(0 0 0 / 0.75);
+  color: var(--os-panel-fg);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms;
+}
+
+.skills-icon:hover .skills-label,
+.skills-icon:focus-visible .skills-label {
+  opacity: 1;
+}

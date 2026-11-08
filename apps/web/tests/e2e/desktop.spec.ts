@@ -1,6 +1,10 @@
 import { content } from "@beself/content";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
+// The desktop: top bar, wallpaper, clock, popovers and the dock. Every test
+// starts from openDesktop, which returns only once the boot is over. The
+// dock's tests open apps by clicking their icons.
+//
 // The name and tagline come from the content package, so the test reads them
 // from there too.
 const { profile } = content;
@@ -25,6 +29,10 @@ async function rect(locator: Locator) {
   if (!box) throw new Error("element has no bounding box");
   return box;
 }
+
+const dock = (page: Page) => page.locator("[data-dock]");
+const dockIcon = (page: Page, id: string) =>
+  page.locator(`[data-dock-app="${id}"]`);
 
 /**
  * Waits for the desktop to show, with room for a full boot (#74), and then for
@@ -215,7 +223,173 @@ test.describe("the popovers", () => {
     await expect(page.locator('[data-boot-stage="off"]')).toBeAttached({
       timeout: 2_000,
     });
-    // The screen stays black here. The way back is the power button on the
-    // base, which comes with #14, so the test ends.
+    // The screen stays black here. The power button that boots again is
+    // tested in boot.spec.ts ("the power cycle"), so the test ends here.
+  });
+});
+
+test.describe("the dock", () => {
+  const frame = (page: Page, id: string) =>
+    page.locator(`[data-window-id="${id}"]`);
+  const menu = (page: Page) => page.getByRole("menu");
+
+  async function centre(locator: Locator) {
+    const box = await rect(locator);
+    return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  }
+
+  test("replaces the launcher", async ({ page }) => {
+    await openDesktop(page);
+    await expect(page.locator('nav[aria-label="Apps"]')).toHaveCount(0);
+    await expect(dock(page)).toBeVisible();
+
+    const ids = await page
+      .locator("[data-dock-app]")
+      .evaluateAll((els) => els.map((el) => el.getAttribute("data-dock-app")));
+    expect(ids).toEqual(["projects", "skills", "about"]);
+
+    // A missing file would fail the test through its console error as well.
+    for (const id of ids) {
+      const img = dockIcon(page, id!).locator("img");
+      await expect
+        .poll(() => img.evaluate((el: HTMLImageElement) => el.naturalWidth))
+        .toBeGreaterThan(0);
+    }
+    await expect(
+      dock(page).getByRole("button", { name: "Show Applications" }),
+    ).toBeVisible();
+  });
+
+  test("runs down the left under the top bar on a laptop", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await openDesktop(page);
+    await expect(dock(page)).toHaveAttribute("data-dock-side", "left");
+
+    // The dock slides in over 300 ms, so wait until it has settled.
+    await expect(async () => {
+      const box = await rect(page.locator("[data-screen-box]"));
+      const bar = await rect(page.locator("[data-topbar]"));
+      const d = await rect(dock(page));
+      const scale = box.width / 1440;
+      expect(Math.abs(d.x - box.x)).toBeLessThanOrEqual(1);
+      expect(Math.abs(d.y - (bar.y + bar.height))).toBeLessThanOrEqual(1);
+      expect(
+        Math.abs(d.y + d.height - (box.y + box.height)),
+      ).toBeLessThanOrEqual(1);
+      // 64 screen units, whatever the scale.
+      expect(Math.abs(d.width / scale - 64)).toBeLessThanOrEqual(1);
+    }).toPass();
+  });
+
+  test("sits at the bottom in fullscreen mode, and its menu opens upwards", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await openDesktop(page);
+    await expect(dock(page)).toHaveAttribute("data-dock-side", "bottom");
+
+    await expect(async () => {
+      const d = await rect(dock(page));
+      expect(Math.abs(d.x)).toBeLessThanOrEqual(1);
+      expect(Math.abs(d.width - 390)).toBeLessThanOrEqual(1);
+      expect(Math.abs(d.y + d.height - 844)).toBeLessThanOrEqual(1);
+      expect(Math.abs(d.height - 64)).toBeLessThanOrEqual(1);
+    }).toPass();
+
+    const projects = dockIcon(page, "projects");
+    await projects.click({ button: "right" });
+    await expect(menu(page)).toBeVisible();
+    // A menu that never flipped would be clamped over its own icon.
+    await expect(async () => {
+      const m = await rect(menu(page));
+      const i = await rect(projects);
+      expect(m.y + m.height).toBeLessThanOrEqual(i.y + 1);
+    }).toPass();
+  });
+
+  test("a click toggles minimise and restore", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await openDesktop(page);
+    const projects = dockIcon(page, "projects");
+    const win = frame(page, "projects");
+
+    await projects.click();
+    await expect(win).toBeVisible();
+    await expect(win).toHaveAttribute("data-focused", "");
+    await expect(projects).toHaveAttribute("data-running", "");
+
+    await projects.click();
+    await expect(win).toBeHidden();
+    // It ended on the dock icon, not where it was.
+    await expect(async () => {
+      const icon = await centre(projects);
+      const ended = await centre(win.locator(":scope > div"));
+      expect(Math.abs(ended.x - icon.x)).toBeLessThanOrEqual(2);
+      expect(Math.abs(ended.y - icon.y)).toBeLessThanOrEqual(2);
+    }).toPass();
+    await expect(projects).toHaveAttribute("data-running", "");
+
+    await projects.click();
+    await expect(win).toBeVisible();
+    await expect(win).toHaveAttribute("data-focused", "");
+  });
+
+  test("a click on an unfocused app focuses it", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await openDesktop(page);
+    await dockIcon(page, "projects").click();
+    await dockIcon(page, "skills").click();
+    await expect(frame(page, "skills")).toHaveAttribute("data-focused", "");
+    await expect(frame(page, "projects")).not.toHaveAttribute("data-focused");
+
+    await dockIcon(page, "projects").click();
+    await expect(frame(page, "projects")).toHaveAttribute("data-focused", "");
+    // One click raised it, and nothing was minimised.
+    await expect(frame(page, "projects")).toBeVisible();
+    await expect(frame(page, "skills")).toBeVisible();
+    await expect(frame(page, "skills")).not.toHaveAttribute("data-focused");
+  });
+
+  test("the tooltip names the app", async ({ page }) => {
+    await openDesktop(page);
+    await dockIcon(page, "projects").hover();
+    await expect(page.getByRole("tooltip")).toHaveText("Projects");
+  });
+
+  test("right-click shows the dock menu, and Esc closes it", async ({
+    page,
+  }) => {
+    await openDesktop(page);
+    const projects = dockIcon(page, "projects");
+
+    await projects.click({ button: "right" });
+    await expect(menu(page)).toBeVisible();
+    await expect(
+      menu(page).getByRole("menuitem", { name: "Unpin" }),
+    ).toBeVisible();
+    await expect(
+      menu(page).getByRole("menuitem", { name: "Quit" }),
+    ).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(menu(page)).toHaveCount(0);
+
+    // Quit closes the app's window, and the running dot goes.
+    await projects.click();
+    await expect(frame(page, "projects")).toBeVisible();
+    await expect(projects).toHaveAttribute("data-running", "");
+    await projects.click({ button: "right" });
+    await menu(page).getByRole("menuitem", { name: "Quit" }).click();
+    await expect(frame(page, "projects")).toHaveCount(0);
+    await expect(projects).not.toHaveAttribute("data-running");
+    await expect(menu(page)).toHaveCount(0);
+
+    // Unpin says it is coming soon, in the calendar's list for now.
+    await projects.click({ button: "right" });
+    await menu(page).getByRole("menuitem", { name: "Unpin" }).click();
+    await expect(menu(page)).toHaveCount(0);
+    await page.locator("[data-clock]").click();
+    await expect(
+      page.getByRole("list", { name: "Notifications" }),
+    ).toContainText("Unpinning apps is coming soon.");
   });
 });
