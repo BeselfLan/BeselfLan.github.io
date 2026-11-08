@@ -72,11 +72,12 @@ export async function open(
   width: number,
   height: number,
   scale: number,
+  path = "/e2e-harness/",
 ) {
   // Below 900 px the screen is fullscreen: the box is the viewport, 1:1.
   const boxWidth = width < 900 ? width : 1440 * scale;
   await page.setViewportSize({ width, height });
-  await page.goto("/e2e-harness/");
+  await page.goto(path);
   // The first render uses the virtual size until the first measurement.
   await expect(async () => {
     const box = await rect(page.locator("[data-screen-box]"));
@@ -392,4 +393,113 @@ test("children paint above the frames", async ({ page }) => {
     [inner.x + inner.width / 2, inner.y + inner.height / 2],
   );
   expect(hit).toBe("harness-overlay");
+});
+
+// The kernel with the real registry and the Hello app (#67). /e2e-apps/ has no
+// boot and no shell, so the cycle does not depend on the desktop that #16
+// replaces; `/` is tested through deep links.
+
+const hello = (page: Page) => frame(page, "hello");
+
+/** The frame has moved by (dx, dy) client px from `before`, within 1 px. */
+async function expectFrameMovedBy(
+  page: Page,
+  id: string,
+  before: { x: number; y: number },
+  dx: number,
+  dy: number,
+) {
+  await expect(async () => {
+    const now = await rect(frame(page, id));
+    expect(Math.abs(now.x - before.x - dx)).toBeLessThanOrEqual(1);
+    expect(Math.abs(now.y - before.y - dy)).toBeLessThanOrEqual(1);
+  }).toPass();
+}
+
+async function openHello(page: Page) {
+  await open(page, 960, 600, 2 / 3, "/e2e-apps/");
+  await page.getByRole("button", { name: "Open Hello" }).click();
+  await expect(hello(page)).toBeVisible();
+  await expect(
+    hello(page).getByRole("heading", { name: /Hello/ }),
+  ).toBeVisible();
+}
+
+test("Hello opens, drags 200 px, minimises, restores and closes", async ({
+  page,
+}) => {
+  await openHello(page);
+  const win = hello(page);
+  const before = await rect(win);
+  await mouseDrag(page, titleBar(page, "hello"), 200, 0);
+  await expectFrameMovedBy(page, "hello", before, 200, 0);
+
+  // Playwright matches names by substring, and Hello has an api.close()
+  // button, so the title bar's buttons are matched exactly.
+  const counter = win.getByRole("button", { name: /Pressed/ });
+  await counter.click();
+  await counter.click();
+  await expect(counter).toHaveText("Pressed 2");
+
+  await win.getByRole("button", { name: "Minimise", exact: true }).click();
+  await expect(win).toBeHidden();
+  await page.getByRole("button", { name: "Open Hello" }).click();
+  await expect(win).toBeVisible();
+  // The app stayed mounted, so its state is still there.
+  await expect(counter).toHaveText("Pressed 2");
+
+  await win.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(frame(page, "hello")).toHaveCount(0);
+  await page.getByRole("button", { name: "Open Hello" }).click();
+  await expect(counter).toHaveText("Pressed 0");
+});
+
+test("Hello's bounds are its content box", async ({ page }) => {
+  await openHello(page);
+  const text = await hello(page).locator('[data-readout="bounds"]').innerText();
+  expect(text).toBe("480 x 320");
+  const [width, height] = text.split(" x ").map(Number);
+
+  // The window scales in on open, so wait for the box to settle.
+  const screenBox = page.locator("[data-screen-box]");
+  await expect(async () => {
+    const scale = (await rect(screenBox)).width / 1440;
+    const content = await rect(hello(page).locator("[data-window-content]"));
+    expect(Math.abs(content.width / scale - width)).toBeLessThanOrEqual(1);
+    expect(Math.abs(content.height / scale - height)).toBeLessThanOrEqual(1);
+  }).toPass();
+});
+
+test("`/` boots to the desktop", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator("[data-desktop]")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator("[data-window-id]")).toHaveCount(0);
+});
+
+test("a deep link opens its app", async ({ page }) => {
+  await page.goto("/?app=hello&name=Ann");
+  await expect(hello(page)).toBeVisible({ timeout: 15_000 });
+  await expect(
+    hello(page).getByRole("heading", { name: "Hello, Ann" }),
+  ).toBeVisible();
+
+  // Nothing (a boot overlay of #13) may sit over the title bar.
+  const bar = await centre(titleBar(page, "hello"));
+  await expect.poll(() => topWindowAt(page, bar.x, bar.y)).toBe("hello");
+  const before = await rect(hello(page));
+  await mouseDrag(page, titleBar(page, "hello"), 200, 0);
+  await expectFrameMovedBy(page, "hello", before, 200, 0);
+
+  await hello(page).getByRole("button", { name: "Close", exact: true }).click();
+  await expect(frame(page, "hello")).toHaveCount(0);
+  // The sync rewrote the URL with replaceState: same page, bare path.
+  await expect.poll(() => new URL(page.url()).pathname).toBe("/");
+  expect(new URL(page.url()).search).toBe("");
+});
+
+test("an unknown app id is ignored", async ({ page }) => {
+  await page.goto("/?app=nope");
+  await expect(page.locator("[data-desktop]")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator("[data-window-id]")).toHaveCount(0);
+  // The afterEach fails the test on any console error.
 });
