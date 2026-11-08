@@ -178,6 +178,39 @@ export function createRing(n: number, initialIndex: number): Ring {
     }, CAROUSEL.wheelIdleMs);
   }
 
+  // Keys are heard on the stage, as they bubble up from the focused item, and
+  // not on the window: a key typed in the chips or in #18's panel must not turn
+  // the ring. Focus follows the key to the item it sends the ring to, which is
+  // known at once, so it does not walk through every item a spring passes.
+  function onKeyDown(e: KeyboardEvent) {
+    // Alt+Arrow is the browser's back and forward. Shift is not checked.
+    if (e.altKey || e.ctrlKey || e.metaKey || e.isComposing) return;
+    if (n < 2) return;
+    const from = m.mode === "spring" ? m.target : m.rot;
+    let to: number;
+    switch (e.key) {
+      case "ArrowRight":
+        to = stepTarget(m, 1, n);
+        break;
+      case "ArrowLeft":
+        to = stepTarget(m, -1, n);
+        break;
+      case "Home":
+        to = rotationForIndex(0, from, n);
+        break;
+      case "End":
+        to = rotationForIndex(n - 1, from, n);
+        break;
+      default:
+        return;
+    }
+    go(to);
+    // The window's content box is overflow: hidden, and a plain focus() can
+    // still scroll it.
+    items[frontIndex(to, n)]?.focus({ preventScroll: true });
+    e.preventDefault();
+  }
+
   return {
     attach(el, stage) {
       ringEl = el;
@@ -191,6 +224,7 @@ export function createRing(n: number, initialIndex: number): Ring {
         off.push(() => stage.removeEventListener(type, listener, options));
       };
       on("wheel", onWheel, { passive: false });
+      on("keydown", onKeyDown);
       paint();
       if (moving(m) && !paused) request();
       return () => {

@@ -334,6 +334,124 @@ describe("Carousel", () => {
     });
   });
 
+  describe("the keys", () => {
+    /** Fires `key` on the focused item, as the browser does. */
+    const key = (name: string, init: KeyboardEventInit = {}) =>
+      fireEvent.keyDown(document.activeElement!, { key: name, ...init });
+
+    it("step the ring and move focus to the front item", () => {
+      const focus = vi.spyOn(HTMLElement.prototype, "focus");
+      const { container } = render(ui());
+      item(container, "bash-shell").focus();
+
+      // Prevented, so the page does not scroll.
+      expect(key("ArrowRight")).toBe(false);
+      frames(1000);
+      expect(frontIds(container)).toEqual(["tetris-asm"]);
+      expect(index(container)).toBe("2 / 13");
+      expect(document.activeElement).toBe(item(container, "tetris-asm"));
+      // A plain focus() can scroll the window's clipped content box.
+      expect(focus).toHaveBeenLastCalledWith({ preventScroll: true });
+      expect(focus.mock.contexts.at(-1)).toBe(item(container, "tetris-asm"));
+
+      expect(key("ArrowLeft")).toBe(false);
+      frames(1000);
+      expect(key("ArrowLeft")).toBe(false);
+      frames(1000);
+      expect(index(container)).toBe("13 / 13");
+      expect(document.activeElement).toBe(item(container, "thornhill-cs-club"));
+
+      expect(key("Home")).toBe(false);
+      frames(1000);
+      expect(index(container)).toBe("1 / 13");
+      expect(document.activeElement).toBe(item(container, "bash-shell"));
+
+      expect(key("End")).toBe(false);
+      frames(1000);
+      expect(index(container)).toBe("13 / 13");
+      expect(document.activeElement).toBe(item(container, "thornhill-cs-club"));
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("start a second press from where the first is going", () => {
+      const { container } = render(ui());
+      item(container, "bash-shell").focus();
+      key("ArrowRight");
+      key("ArrowRight");
+      frames(1000);
+      expect(index(container)).toBe("3 / 13");
+      expect(document.activeElement).toBe(item(container, "trivia-knockouts"));
+    });
+
+    it("go to the last item the short way from where a spring is heading", () => {
+      const { container } = render(ui());
+      item(container, "bash-shell").focus();
+      for (let i = 0; i < 7; i++) key("ArrowRight");
+      key("End");
+      frames(3000);
+      expect(index(container)).toBe("13 / 13");
+      // From the target, -7 x θ, the last item is 5 x θ on. From the ring's
+      // place, still 0, it would be one θ back.
+      expect(ringEl(container).style.transform).toBe(
+        ringTransform(-12 * THETA, 13),
+      );
+    });
+
+    it("leave other keys alone", () => {
+      const { container } = render(ui());
+      item(container, "bash-shell").focus();
+      for (const name of ["ArrowUp", "ArrowDown", "PageDown", "a"]) {
+        expect(key(name)).toBe(true);
+      }
+      frames(1000);
+      expect(index(container)).toBe("1 / 13");
+    });
+
+    it("are heard on the stage only", () => {
+      const { container } = render(ui());
+      expect(fireEvent.keyDown(window, { key: "ArrowRight" })).toBe(true);
+      expect(fireEvent.keyDown(document.body, { key: "End" })).toBe(true);
+      frames(1000);
+      expect(index(container)).toBe("1 / 13");
+    });
+
+    it("leave chords alone", () => {
+      const { container } = render(ui());
+      item(container, "bash-shell").focus();
+      // Alt+Arrow is the browser's back and forward.
+      for (const chord of [
+        { altKey: true },
+        { ctrlKey: true },
+        { metaKey: true },
+      ]) {
+        expect(key("ArrowRight", chord)).toBe(true);
+      }
+      expect(key("ArrowRight", { isComposing: true })).toBe(true);
+      frames(1000);
+      expect(index(container)).toBe("1 / 13");
+      expect(document.activeElement).toBe(item(container, "bash-shell"));
+    });
+
+    it("do nothing on a ring of one item", () => {
+      const one = ITEMS.filter((e) => e.id === "thornhill-cs-club");
+      const { container } = render(ui({ items: one }));
+      item(container, "thornhill-cs-club").focus();
+      expect(key("ArrowRight")).toBe(true);
+      expect(key("End")).toBe(true);
+      frames(1000);
+      expect(index(container)).toBe("1 / 1");
+      expect(ringEl(container).style.transform).toBe(ringTransform(0, 1));
+    });
+
+    it("jump while the window is hidden", () => {
+      const { container } = render(ui({ paused: true }));
+      item(container, "bash-shell").focus();
+      expect(key("ArrowRight")).toBe(false);
+      expect(index(container)).toBe("2 / 13");
+      expect(vi.getTimerCount()).toBe(0);
+    });
+  });
+
   describe("the wheel", () => {
     it("turns the ring directly and snaps 120 ms after the last event", () => {
       const { container } = render(ui());
