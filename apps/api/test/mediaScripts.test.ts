@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -419,5 +420,94 @@ describe.skipIf(!has("ffmpeg") || !has("ffprobe"))("convert.sh", () => {
     expect(run.status).not.toBe(0);
     expect(readdirSync(out).sort()).toEqual(files);
     expect(readFileSync(manifest).equals(before)).toBe(true);
+  }, 60_000);
+});
+
+// The fixtures are fake bytes and a manifest that names them, so ffmpeg is not
+// needed.
+describe.skipIf(!has("rsync"))("sync.sh", () => {
+  function sync(source: string, target: string, args: string[] = []) {
+    return script("sync.sh", args, {
+      MEDIA_SYNC_SOURCE: source,
+      MEDIA_SYNC_TARGET: target,
+    });
+  }
+
+  it("sends the media, then the manifest, and skips dotfiles", () => {
+    const source = goodFolder();
+    mkdirSync(join(source, ".convert-x"));
+    writeFileSync(join(source, ".convert-x", "partial.mp4"), "x");
+    writeFileSync(join(source, ".secret"), "x");
+    const target = join(tempDir(), "media");
+
+    const run = sync(source, target);
+    expect(run.status, run.stderr).toBe(0);
+    expect(readdirSync(target).sort()).toEqual([
+      "demo.jpg",
+      "demo.mp4",
+      "demo.webm",
+      "manifest.json",
+    ]);
+    expect(
+      readFileSync(join(target, "manifest.json")).equals(
+        readFileSync(join(source, "manifest.json")),
+      ),
+    ).toBe(true);
+  }, 60_000);
+
+  it("sends the manifest last", () => {
+    const target = tempDir();
+    // "zed" sorts after "manifest.json", so one rsync would send it first.
+    const run = sync(goodFolder("zed"), target, ["--dry-run", "-v"]);
+    expect(run.status, run.stderr).toBe(0);
+    const at = (name: string) => run.stdout.indexOf(name);
+    for (const name of ["zed.jpg", "zed.mp4", "zed.webm"]) {
+      expect(at(name)).toBeGreaterThan(-1);
+      expect(at(name)).toBeLessThan(at("manifest.json"));
+    }
+    expect(run.stdout.match(/manifest\.json/g)).toHaveLength(1);
+  }, 60_000);
+
+  it("makes files readable for the container user, and never deletes", () => {
+    const source = goodFolder();
+    chmodSync(join(source, "demo.mp4"), 0o600);
+    const target = tempDir();
+    writeFileSync(join(target, "older.mp4"), "kept");
+
+    expect(sync(source, target).status).toBe(0);
+    expect(statSync(join(target, "demo.mp4")).mode & 0o777).toBe(0o644);
+    expect(statSync(join(target, "manifest.json")).mode & 0o777).toBe(0o644);
+    expect(readFileSync(join(target, "older.mp4"), "utf8")).toBe("kept");
+  }, 60_000);
+
+  it("refuses a manifest that names a missing file", () => {
+    const source = goodFolder();
+    rmSync(join(source, "demo.webm"));
+    const target = tempDir();
+    const run = sync(source, target);
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toContain("demo.webm");
+    expect(readdirSync(target)).toEqual([]);
+  }, 60_000);
+
+  it("needs a manifest to send", () => {
+    const target = tempDir();
+    const run = sync(tempDir(), target);
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toContain("manifest.json");
+    expect(readdirSync(target)).toEqual([]);
+  }, 60_000);
+
+  it("needs a target", () => {
+    const run = sync(goodFolder(), "");
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toContain("MEDIA_SYNC_TARGET");
+  }, 60_000);
+
+  it("passes rsync options through", () => {
+    const target = tempDir();
+    const run = sync(goodFolder(), target, ["--dry-run"]);
+    expect(run.status, run.stderr).toBe(0);
+    expect(readdirSync(target)).toEqual([]);
   }, 60_000);
 });
