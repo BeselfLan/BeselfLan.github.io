@@ -175,6 +175,27 @@ describe("events", () => {
       );
     }
   });
+
+  it("lock enters login from the desktop, and from nowhere else", () => {
+    for (const stage of Object.keys(BOOT_STAGES) as BootStage[]) {
+      expect(bootMachine.stageForEvent("lock", stage), `from ${stage}`).toBe(
+        stage === "desktop" ? "login" : null,
+      );
+    }
+  });
+
+  it.each([
+    ["full", 400],
+    ["fast", 400],
+    ["skip", 0],
+  ] as const)(
+    "after a lock, login leads back through desktop-enter (%s, %i ms)",
+    (mode, total) => {
+      const w = walk(bootMachine, "login", ctx(mode, { showLogin: true }));
+      expect(w.path).toEqual(["login", "desktop-enter", "desktop"]);
+      expect(w.total).toBe(total);
+    },
+  );
 });
 
 describe("one entry adds a stage", () => {
