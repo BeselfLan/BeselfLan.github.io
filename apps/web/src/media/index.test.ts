@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { pickMediaProvider } from "./index";
+import { media as bound } from "@/media/provider";
+import { media, pickMediaProvider } from "./index";
 
 // Which provider was picked is read from the URLs it fetches. Every fetch
 // rejects, so no test leaves the process, and the API provider falls through to
@@ -48,6 +49,12 @@ describe("media/index", () => {
       expect(fetchMock.mock.calls[1][0]).toBe(MANIFEST_URL);
     },
   );
+
+  it("the binding is the picked provider", () => {
+    // provider.ts re-exports index.ts's binding. A copy, or a placeholder left
+    // behind, would be a different object.
+    expect(bound).toBe(media);
+  });
 
   it("nothing is fetched until something resolves", () => {
     const fetchMock = failing();
