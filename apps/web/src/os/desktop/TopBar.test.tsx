@@ -162,6 +162,7 @@ describe("TopBar", () => {
         "calendar",
         "Calendar and notifications",
       ],
+      ["the system menu", () => button("System menu"), "power", "System menu"],
     ] as const;
     const dialogNamed = (name: string) =>
       screen.queryByRole("dialog", { name });
@@ -210,6 +211,25 @@ describe("TopBar", () => {
         expect(dialogNamed(name)).toBeNull();
       },
     );
+
+    it("holds one popover at a time", () => {
+      mount();
+      open(() => q("[data-clock]")!, "calendar", "Calendar and notifications");
+      fireEvent.click(button("System menu"));
+      expect(shell().openPopover).toBe("power");
+      expect(dialogNamed("Calendar and notifications")).toBeNull();
+      expect(dialogNamed("System menu")).not.toBeNull();
+    });
+
+    it("closes the menu on Esc when the focus is on the button, too", () => {
+      mount();
+      const trigger = button("System menu");
+      trigger.focus();
+      fireEvent.click(trigger);
+      trigger.focus();
+      fireEvent.keyDown(trigger, { key: "Escape" });
+      expect(shell().openPopover).toBeNull();
+    });
 
     it.each(popovers)("%s stays open on a press inside", (_, get, id, name) => {
       mount();

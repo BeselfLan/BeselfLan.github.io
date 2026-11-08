@@ -11,6 +11,7 @@ import { REDUCED_MOTION } from "../window/windowMotion";
 import { CalendarPopover } from "./CalendarPopover";
 import { formatClock, useClock } from "./clock";
 import { useMediaStatus } from "./mediaStatus";
+import { PowerMenu } from "./PowerMenu";
 import { BatteryIcon, NetworkIcon, VolumeIcon } from "./TrayIcons";
 
 // The bar is `--top-bar-h` (32) screen units tall; it slides in from above.
@@ -58,7 +59,9 @@ export function TopBar() {
 
   const clockRef = useRef<HTMLButtonElement>(null);
   const powerRef = useRef<HTMLButtonElement>(null);
+  // One anchor per popover, so switching from one to the other cannot move it.
   const [calendarAnchor, setCalendarAnchor] = useState(NO_ANCHOR);
+  const [powerAnchor, setPowerAnchor] = useState(NO_ANCHOR);
 
   return (
     <MotionConfig reducedMotion={REDUCED_MOTION[reducedSetting]}>
@@ -109,9 +112,11 @@ export function TopBar() {
             aria-label="System menu"
             aria-haspopup="dialog"
             aria-expanded={openPopover === "power"}
-            onClick={() =>
-              os.shell.setPopover(openPopover === "power" ? null : "power")
-            }
+            onClick={(e) => {
+              if (openPopover !== "power")
+                setPowerAnchor(anchorOf(e.currentTarget));
+              os.shell.setPopover(openPopover === "power" ? null : "power");
+            }}
           >
             <NetworkIcon status={mediaStatus} />
             <VolumeIcon />
@@ -124,6 +129,12 @@ export function TopBar() {
         anchor={calendarAnchor}
         triggerRef={clockRef}
         today={now}
+      />
+      <PowerMenu
+        open={openPopover === "power"}
+        anchor={powerAnchor}
+        triggerRef={powerRef}
+        status={mediaStatus}
       />
     </MotionConfig>
   );
