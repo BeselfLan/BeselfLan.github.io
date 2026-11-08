@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("placeholder page renders with tokens and fonts, no console errors", async ({
+test("the composed page renders with tokens and fonts, no console errors", async ({
   page,
 }) => {
   const errors: string[] = [];
@@ -10,23 +10,28 @@ test("placeholder page renders with tokens and fonts, no console errors", async 
   page.on("pageerror", (err) => errors.push(err.message));
 
   await page.goto("/");
+  // The boot has run and the desktop is up, so a late error would show.
+  await expect(page.locator("[data-desktop]")).toBeVisible({ timeout: 15_000 });
 
-  const heading = page.getByRole("heading", { name: /BeselfOS v2/ });
-  await expect(heading).toBeVisible();
-  await expect(page.locator("main")).toHaveCSS(
+  // Visually hidden, so attached rather than visible.
+  await expect(
+    page.getByRole("heading", { level: 1, name: /BeselfOS/ }),
+  ).toBeAttached();
+  await expect(page.locator("body")).toHaveCSS(
     "background-color",
     "rgb(44, 0, 30)",
   );
   await expect(page.locator("body")).toHaveCSS("font-family", /Ubuntu/);
-  await expect(heading).toHaveCSS("font-family", /Ubuntu.Mono/);
 
-  const orange = await page.evaluate(() =>
-    getComputedStyle(document.documentElement)
-      .getPropertyValue("--os-orange")
-      .trim()
-      .toLowerCase(),
-  );
-  expect(orange).toBe("#e95420");
+  const vars = await page.evaluate(() => {
+    const root = getComputedStyle(document.documentElement);
+    return {
+      orange: root.getPropertyValue("--os-orange").trim().toLowerCase(),
+      mono: root.getPropertyValue("--font-mono"),
+    };
+  });
+  expect(vars.orange).toBe("#e95420");
+  expect(vars.mono).toMatch(/Ubuntu.Mono/);
 
   expect(errors).toEqual([]);
 });
