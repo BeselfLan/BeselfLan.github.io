@@ -141,8 +141,49 @@ describe("useDrag", () => {
     mount();
     press();
     moveTo(350, 120);
-    fireEvent.pointerUp(handle(), ev());
+    // A cancel keeps the last move: its own point is not a release point.
+    fireEvent.pointerCancel(handle(), ev({ clientX: 0, clientY: 0 }));
     expect(pos()).toEqual({ x: 250, y: 100 });
+  });
+
+  it("the release point wins", () => {
+    mount();
+    press();
+    moveTo(350, 120);
+    // The up arrives with no frame run: Chromium can deliver it before the
+    // last queued move, so the up's own point is where the drag ends.
+    fireEvent.pointerUp(handle(), ev({ clientX: 400, clientY: 120 }));
+    expect(pos()).toEqual({ x: 300, y: 100 });
+    expect(onDragEnd).toHaveBeenCalledWith({ x: 300, y: 100 });
+  });
+
+  it("a release where it already is writes nothing", () => {
+    mount();
+    press();
+    fireEvent.pointerUp(handle(), ev());
+    expect(move).not.toHaveBeenCalled();
+    expect(onDragEnd).toHaveBeenCalledWith({ x: 200, y: 100 });
+  });
+
+  it("the left edge clamps through the hook", () => {
+    mount();
+    press();
+    moveTo(-5000, 120);
+    frame();
+    expect(pos().x).toBe(-296);
+  });
+
+  it("a second drag moves the window", () => {
+    mount();
+    press();
+    moveTo(350, 120);
+    fireEvent.pointerUp(handle(), ev({ clientX: 350 }));
+    expect(pos()).toEqual({ x: 250, y: 100 });
+
+    press();
+    moveTo(400, 120);
+    frame();
+    expect(pos().x).toBe(350);
   });
 
   it("ignores other buttons", () => {
@@ -219,7 +260,7 @@ describe("useDrag", () => {
     mount();
     press();
     moveTo(5000, 120);
-    fireEvent.pointerUp(handle(), ev());
+    fireEvent.pointerUp(handle(), ev({ clientX: 5000 }));
     fireEvent.lostPointerCapture(handle(), ev());
     expect(onDragEnd).toHaveBeenCalledTimes(1);
     expect(onDragEnd).toHaveBeenCalledWith({ x: 1400, y: 100 });
