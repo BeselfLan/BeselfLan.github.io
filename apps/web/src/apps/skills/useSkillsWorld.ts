@@ -33,7 +33,9 @@ export interface SkillsWorldOptions {
   /**
    * The stage's element. When it is given and the browser has a
    * `ResizeObserver`, the world follows the element's size, which covers
-   * maximise and fullscreen.
+   * maximise and fullscreen. If the element is replaced while the hook stays
+   * mounted (a list-view toggle), the hook watches the new one after the render
+   * that replaced it.
    */
   stageRef?: RefObject<HTMLElement | null>;
 }
@@ -118,8 +120,24 @@ export function useSkillsWorld({
     loop.current?.setBodies(idList, radius);
   }, [api, idList, radius]);
 
+  // The stage's size. A ref object does not change when its element is
+  // replaced (a list-view toggle remounts the stage while this hook stays
+  // mounted), so this effect has no dependency list: after every render it
+  // compares the element and the api with what it watches, and starts over when
+  // either differs. A new observer reports the size as soon as it starts, which
+  // is how a loop rebuilt for a new api, or the new element, gets the stage's
+  // size and not just `stageRect(api.bounds())`.
+  const watching = useRef<{
+    el: HTMLElement;
+    api: SkillsWorldOptions["api"];
+    observer: ResizeObserver;
+  } | null>(null);
   useEffect(() => {
-    const el = stageRef?.current;
+    const el = stageRef?.current ?? null;
+    const now = watching.current;
+    if (now && now.el === el && now.api === api) return;
+    now?.observer.disconnect();
+    watching.current = null;
     if (!el || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => {
       // Screen units: the screen's scale is a transform, which the layout
@@ -131,8 +149,15 @@ export function useSkillsWorld({
       }
     });
     observer.observe(el);
-    return () => observer.disconnect();
-  }, [stageRef]);
+    watching.current = { el, api, observer };
+  });
+  useEffect(
+    () => () => {
+      watching.current?.observer.disconnect();
+      watching.current = null;
+    },
+    [],
+  );
 
   return { ref, loop };
 }

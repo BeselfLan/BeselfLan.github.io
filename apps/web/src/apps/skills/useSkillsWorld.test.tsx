@@ -59,12 +59,15 @@ function Harness({
   radius = 28,
   hold,
   withStage = false,
+  stageKey = 0,
 }: {
   api: WorldApi;
   ids: readonly string[];
   radius?: number;
   hold: Holder;
   withStage?: boolean;
+  /** A new key remounts the stage element, as a list-view toggle would. */
+  stageKey?: number;
 }) {
   const stage = useRef<HTMLDivElement>(null);
   const world: SkillsWorld = useSkillsWorld({
@@ -78,7 +81,7 @@ function Harness({
     hold.report(world.loop, a);
   });
   return (
-    <div data-stage="" ref={stage}>
+    <div key={stageKey} data-stage="" ref={stage}>
       {ids.map((id) => (
         <div key={id} data-id={id} ref={world.ref(id)} />
       ))}
@@ -426,6 +429,79 @@ describe("useSkillsWorld", () => {
         act(() => FakeObserver.all[0].callback());
       }
       expect(spy).not.toHaveBeenCalled();
+    });
+
+    it("watches the new element when the stage is remounted", () => {
+      const { api } = makeApi();
+      const hold = holder();
+      const view = render(
+        <Harness api={api} ids={IDS} hold={hold} withStage stageKey={1} />,
+      );
+      const first = view.container.querySelector("[data-stage]")!;
+      expect(FakeObserver.all).toHaveLength(1);
+
+      view.rerender(
+        <Harness api={api} ids={IDS} hold={hold} withStage stageKey={2} />,
+      );
+      const second = view.container.querySelector("[data-stage]")!;
+      expect(second).not.toBe(first);
+      // The first observer let go of the detached element.
+      expect(FakeObserver.all[0].disconnect).toHaveBeenCalledTimes(1);
+      expect(FakeObserver.all).toHaveLength(2);
+      expect(FakeObserver.all[1].observe).toHaveBeenCalledWith(second);
+
+      // And the walls follow the new element.
+      const spy = vi.spyOn(hold.loop!.current!, "setBounds");
+      size(second, 600, 300);
+      act(() => FakeObserver.all[1].callback());
+      expect(spy).toHaveBeenCalledWith({ x: 0, y: 0, width: 600, height: 300 });
+    });
+
+    it("keeps one observer while the stage element stays", () => {
+      const { api } = makeApi();
+      const hold = holder();
+      const view = render(
+        <Harness api={api} ids={IDS} hold={hold} withStage />,
+      );
+      view.rerender(
+        <Harness api={api} ids={["x", "y"]} hold={hold} withStage />,
+      );
+      view.rerender(
+        <Harness
+          api={api}
+          ids={["x", "y"]}
+          radius={24}
+          hold={hold}
+          withStage
+        />,
+      );
+      expect(FakeObserver.all).toHaveLength(1);
+      expect(FakeObserver.all[0].disconnect).not.toHaveBeenCalled();
+    });
+
+    it("observes again for a new api, so its new loop gets the stage size", () => {
+      const first = makeApi();
+      const hold = holder();
+      const view = render(
+        <Harness api={first.api} ids={IDS} hold={hold} withStage />,
+      );
+      const loopBefore = hold.loop!.current;
+
+      const second = makeApi();
+      view.rerender(
+        <Harness api={second.api} ids={IDS} hold={hold} withStage />,
+      );
+      // A different loop was built for the new api.
+      expect(hold.loop!.current).not.toBe(loopBefore);
+      expect(FakeObserver.all[0].disconnect).toHaveBeenCalledTimes(1);
+      expect(FakeObserver.all).toHaveLength(2);
+
+      // A real observer reports the size as soon as it starts watching, and
+      // that reaches the new loop, not the disposed one.
+      const spy = vi.spyOn(hold.loop!.current!, "setBounds");
+      size(view.container.querySelector("[data-stage]")!, 700, 400);
+      act(() => FakeObserver.all[1].callback());
+      expect(spy).toHaveBeenCalledWith({ x: 0, y: 0, width: 700, height: 400 });
     });
 
     it("disconnects on unmount, and never watches without a stage", () => {
