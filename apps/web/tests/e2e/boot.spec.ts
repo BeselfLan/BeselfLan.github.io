@@ -101,34 +101,51 @@ async function bootMarks(page: Page): Promise<BootMark[]> {
   return marks.slice(first);
 }
 
-test("a fresh context reaches the desktop in under 6 s", async ({ page }) => {
-  await page.goto("/");
-  await inFrame(page, DESKTOP_UP);
-  const marks = await bootMarks(page);
-  expect(marks.map((m) => m.stage)).toEqual([
-    "lid-opening",
-    "power-on",
-    "firmware",
-    "boot-log",
-    "desktop-enter",
-    "desktop",
-  ]);
-  for (const m of marks) expect(m.mode, m.stage).toBe("full");
-  // What the stage clock scheduled, which no host can stretch: 3.2's fixed
-  // stages total 2200 ms, and the log is capped at 2600 (LOG_MAX_MS, #73).
-  const scheduled = marks.reduce((sum, m) => sum + (m.ms ?? 0), 0);
-  expect(scheduled, "scheduled ms").toBeGreaterThanOrEqual(4000);
-  expect(scheduled, "scheduled ms").toBeLessThanOrEqual(4800);
-  // How long it took, from the first stage's mark to the desktop's. Loading
-  // the page comes before the first mark and is not counted: a busy host
-  // stretches it, most of all under next dev (#124). No stage ends early.
-  const took = marks.at(-1)!.at - marks[0].at;
-  console.log(
-    `boot: first stage at ${Math.round(marks[0].at)} ms, scheduled ${scheduled} ms, took ${Math.round(took)} ms`,
-  );
-  expect(took, "the boot took (ms)").toBeGreaterThanOrEqual(scheduled - 50);
-  expect(took, "the boot took (ms)").toBeLessThan(6000);
-  await expect(page.locator("[data-desktop]")).toBeVisible();
+// A starved browser can stretch one boot past 6 s on a busy host (#124: one
+// run in 11 at a 4x CPU throttle). A boot that is slow by design fails both
+// attempts, because the scheduled total and the stage timers repeat exactly;
+// a stall rarely repeats, and Playwright reports the pass as flaky.
+// Override: delete the configure line and accept the rare failure.
+test.describe("the full boot's time", () => {
+  test.describe.configure({ retries: 1 });
+
+  test("a fresh context reaches the desktop in under 6 s", async ({
+    page,
+  }, testInfo) => {
+    await page.goto("/");
+    await inFrame(page, DESKTOP_UP);
+    const marks = await bootMarks(page);
+    expect(marks.map((m) => m.stage)).toEqual([
+      "lid-opening",
+      "power-on",
+      "firmware",
+      "boot-log",
+      "desktop-enter",
+      "desktop",
+    ]);
+    for (const m of marks) expect(m.mode, m.stage).toBe("full");
+    // What the stage clock scheduled, which no host can stretch: 3.2's fixed
+    // stages total 2200 ms, and the log is capped at 2600 (LOG_MAX_MS, #73).
+    const scheduled = marks.reduce((sum, m) => sum + (m.ms ?? 0), 0);
+    // How long it took, from the first stage's mark to the desktop's. Loading
+    // the page comes before the first mark and is not counted: a busy host
+    // stretches it, most of all under next dev (#124). No stage ends early.
+    const took = marks.at(-1)!.at - marks[0].at;
+    // Every attempt prints its numbers before any timing assertion can stop it,
+    // so a stall shows which stage absorbed the time.
+    const offsets = marks
+      .slice(1)
+      .map((m) => `${m.stage} +${Math.round(m.at - marks[0].at)}`)
+      .join(", ");
+    console.log(
+      `boot (attempt ${testInfo.retry + 1}): first stage at ${Math.round(marks[0].at)} ms, scheduled ${scheduled} ms, took ${Math.round(took)} ms; ${offsets}`,
+    );
+    expect(scheduled, "scheduled ms").toBeGreaterThanOrEqual(4000);
+    expect(scheduled, "scheduled ms").toBeLessThanOrEqual(4800);
+    expect(took, "the boot took (ms)").toBeGreaterThanOrEqual(scheduled - 50);
+    expect(took, "the boot took (ms)").toBeLessThan(6000);
+    await expect(page.locator("[data-desktop]")).toBeVisible();
+  });
 });
 
 test("stages play in order with the 3.2 durations", async ({ page }) => {
