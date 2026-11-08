@@ -1,8 +1,8 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 // The Projects window in Chromium: the chips, the count, the selection and the
-// entry icons (#82), and the 3D ring with its buttons and clicks (#94). #95
-// and #18 add their own tests to this file.
+// entry icons (#82), the 3D ring with its buttons and clicks (#94), and its
+// wheel, drag and keys (#95). #18 adds its own tests to this file.
 
 test.setTimeout(60_000); // The first request compiles the route.
 test.use({ viewport: { width: 1440, height: 900 } });
@@ -290,4 +290,151 @@ test("the chips rebuild the ring", async ({ page }) => {
     expect(b.top).toBeGreaterThanOrEqual(boxes.stage.top - 1);
     expect(b.bottom).toBeLessThanOrEqual(boxes.stage.bottom + 1);
   }
+});
+
+// The wheel, the drag and the keys (#95). The mouse is driven at measured
+// client coordinates: a moving ring fails Playwright's "stable" check, so
+// nothing here clicks an item while the ring turns. Positions are read only
+// after settleRotation, because the ring springs after every input.
+
+const THETA = 360 / 13;
+
+// The ring's rotation, from the `rotateY` of its inline transform.
+async function ringRotation(page: Page): Promise<number> {
+  return ring(page).evaluate((el) => {
+    const found = /rotateY\((-?[\d.]+)deg\)/.exec(
+      (el as HTMLElement).style.transform,
+    );
+    if (found === null) throw new Error("the ring has no rotateY");
+    return Number(found[1]);
+  });
+}
+
+// Polls until two reads 150 ms apart are equal and sit on a whole item, then
+// returns the rotation. 150 ms is longer than the wheel's 120 ms idle time, so
+// two equal reads cannot both fall in the pause before the snap.
+async function settleRotation(page: Page): Promise<number> {
+  let before = await ringRotation(page);
+  let after = before;
+  await expect
+    .poll(
+      async () => {
+        await page.waitForTimeout(150);
+        after = await ringRotation(page);
+        const same = after === before;
+        const onItem =
+          Math.abs(after - Math.round(after / THETA) * THETA) < 0.01;
+        before = after;
+        return same && onItem;
+      },
+      { timeout: 10_000 },
+    )
+    .toBe(true);
+  return after;
+}
+
+// The first number of the indicator, "k" of "k / n".
+async function frontNumber(page: Page): Promise<number> {
+  const text = (await indicator(page).textContent()) ?? "";
+  const found = /^(\d+) \//.exec(text);
+  if (found === null) throw new Error(`the indicator reads "${text}"`);
+  return Number(found[1]);
+}
+
+async function centreOf(target: Locator): Promise<{ x: number; y: number }> {
+  const box = await settle(target);
+  return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+}
+
+// Presses at the stage's centre and drags 200 px left in 10 steps. A held drag
+// stops for 150 ms before it lets go; a flick lets go while still moving.
+async function dragLeft(page: Page, held: boolean) {
+  const c = await centreOf(stage(page));
+  await page.mouse.move(c.x, c.y);
+  await page.mouse.down();
+  await page.mouse.move(c.x - 200, c.y, { steps: 10 });
+  if (held) await page.waitForTimeout(150);
+  await page.mouse.up();
+}
+
+test("wheel 3 notches changes the front item", async ({ page }) => {
+  await openProjects(page);
+  await settle(entry(page, "bash-shell"));
+  const c = await centreOf(stage(page));
+  await page.mouse.move(c.x, c.y);
+  for (let i = 0; i < 3; i++) await page.mouse.wheel(0, 100);
+
+  await settleRotation(page);
+  // Wheel-down moves forward. Three notches in one run are 3 / 13, and each
+  // notch that settles before the next one arrives makes it 4 / 13.
+  expect([3, 4]).toContain(await frontNumber(page));
+  const front = await centreOf(inFront(page));
+  const frame = await centreOf(stage(page));
+  expect(Math.abs(front.x - frame.x)).toBeLessThanOrEqual(2);
+});
+
+test("a drag follows the pointer and snaps", async ({ page }) => {
+  await openProjects(page);
+  await settle(entry(page, "bash-shell"));
+  await dragLeft(page, true);
+
+  const rot = await settleRotation(page);
+  expect(rot).toBeLessThan(0);
+  expect(await frontNumber(page)).toBeGreaterThan(1);
+  // The pointer went left and the ring followed it, so the first item is now
+  // on the left. C.1's sign would send it right.
+  const bash = await centreOf(entry(page, "bash-shell"));
+  const frame = await centreOf(stage(page));
+  expect(bash.x).toBeLessThan(frame.x);
+  await expect(win(page).locator("[data-selected]")).toHaveCount(0);
+});
+
+test("a short drag selects nothing", async ({ page }) => {
+  await openProjects(page);
+  const c = await centreOf(entry(page, "bash-shell"));
+  await page.mouse.move(c.x, c.y);
+  await page.mouse.down();
+  await page.mouse.move(c.x - 20, c.y, { steps: 2 });
+  // Held still, so the release has no speed: a 20 px move made in a few
+  // milliseconds is a flick, and the ring would coast to the next item.
+  await page.waitForTimeout(150);
+  await page.mouse.up();
+
+  await settleRotation(page);
+  await expect(indicator(page)).toHaveText(/^1 \/ 13\b/);
+  // Without the capture at the threshold and the swallow, Chromium clicks the
+  // item the press began on.
+  await expect(win(page).locator("[data-selected]")).toHaveCount(0);
+});
+
+test("a flick carries on", async ({ page }) => {
+  await openProjects(page);
+  await settle(entry(page, "bash-shell"));
+  await dragLeft(page, true);
+  const held = await settleRotation(page);
+
+  await dragLeft(page, false);
+  const flicked = await settleRotation(page);
+  // Both drags are the same length. The second one lets go while moving, so it
+  // turns at least one item further than the held one.
+  expect(flicked - held).toBeLessThanOrEqual(held - THETA + 0.01);
+});
+
+test("the keys step the ring and move focus", async ({ page }) => {
+  await openProjects(page);
+  await settle(entry(page, "bash-shell"));
+  await entry(page, "bash-shell").focus();
+
+  await page.keyboard.press("ArrowRight");
+  await expect(indicator(page)).toHaveText(/^2 \/ 13\b/);
+  await expect(entry(page, "tetris-asm")).toHaveAttribute("data-front", "");
+  await expect(entry(page, "tetris-asm")).toBeFocused();
+
+  await page.keyboard.press("End");
+  await expect(indicator(page)).toHaveText(/^13 \/ 13\b/);
+  await expect(entry(page, "thornhill-cs-club")).toBeFocused();
+
+  await page.keyboard.press("Home");
+  await expect(indicator(page)).toHaveText(/^1 \/ 13\b/);
+  await expect(entry(page, "bash-shell")).toBeFocused();
 });
