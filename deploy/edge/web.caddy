@@ -1,0 +1,10 @@
+# The site's block for a Caddy the host already runs (plan 7.6), in topology (b)
+# with deploy/docker-compose.web.yml and deploy/docker-compose.edge.yml. That
+# Caddy needs, in its own stack:
+# - to be on the Docker network named by EDGE_NETWORK in deploy/.env;
+# - BESELFOS_WEB_SITE in its environment, the same value as WEB_SITE;
+# - an `import` of this file in its Caddyfile, then a reload.
+# The headers come from the site image itself.
+{$BESELFOS_WEB_SITE} {
+	reverse_proxy beselfos-web:8080
+}

@@ -1,5 +1,7 @@
-# A laptop run: builds the API from this checkout, serves media from a host
-# folder, and publishes Caddy on one loopback port. Use it after docker-compose.yml.
+# A laptop run: builds the API from this checkout (and the site, when
+# docker-compose.web.yml turns topology (b) on), serves media from a host
+# folder, and publishes Caddy on one loopback port. Use it after
+# docker-compose.yml.
 services:
   api:
     image: beselfos-api:local
@@ -8,6 +10,13 @@ services:
       dockerfile: apps/api/Dockerfile
     volumes:
       - ${MEDIA_HOST_DIR:-../apps/api/media}:/media:ro
+  web:
+    image: beselfos-web:local
+    build:
+      context: ..
+      dockerfile: deploy/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: "${NEXT_PUBLIC_API_URL:-}"
   caddy:
     ports: !override
       - "127.0.0.1:${HTTP_PORT:?pick a free HTTP_PORT for a local run}:80"

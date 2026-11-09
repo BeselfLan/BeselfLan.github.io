@@ -23,3 +23,7 @@
 		reverse_proxy api:8080
 	}
 }
+
+# Topology (b) mounts deploy/web/site.caddy here (docker-compose.web.yml). With
+# no file, Caddy logs one warning and carries on.
+import /etc/caddy/sites/*.caddy

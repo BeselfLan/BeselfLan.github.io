@@ -15,6 +15,7 @@ const root = resolve(import.meta.dirname, "../../..");
 const base = join(root, "deploy/docker-compose.yml");
 const local = join(root, "deploy/docker-compose.local.yml");
 const edge = join(root, "deploy/docker-compose.edge.yml");
+const web = join(root, "deploy/docker-compose.web.yml");
 const read = (file: string) => readFileSync(join(root, file), "utf8");
 
 // The files under a folder that the repository tracks or would add: a new file
@@ -51,10 +52,16 @@ interface Service {
   volumes?: Volume[];
   networks?: Record<string, { aliases?: string[] } | null>;
   environment?: Record<string, string>;
-  build?: { context: string; dockerfile: string };
+  profiles?: string[];
+  depends_on?: Record<string, { condition: string }>;
+  build?: {
+    context: string;
+    dockerfile: string;
+    args?: Record<string, string>;
+  };
 }
 interface Rendered {
-  services: { api: Service; caddy: Service };
+  services: { api: Service; caddy: Service; web: Service };
   networks?: Record<string, { name?: string; external?: boolean }>;
 }
 
@@ -77,8 +84,9 @@ const required = {
 };
 
 // Only PATH and HOME: Compose lets shell variables override --env-file, so a
-// developer's own API_SITE must not leak into these tests.
-function compose(envFile: string, files: string[]) {
+// developer's own API_SITE must not leak into these tests. With no files and a
+// `cwd`, Compose picks its files itself, as it does on the VPS.
+function compose(envFile: string, files: string[], cwd?: string) {
   return spawnSync(
     "docker",
     [
@@ -93,6 +101,7 @@ function compose(envFile: string, files: string[]) {
       "json",
     ],
     {
+      cwd,
       encoding: "utf8",
       env: { PATH: process.env.PATH, HOME: process.env.HOME },
     },
@@ -102,6 +111,7 @@ function compose(envFile: string, files: string[]) {
 function render(
   env: Record<string, string> = {},
   files: string[] = [base],
+  cwd?: string,
 ): Rendered {
   const envFile = join(tempDir(), "env");
   writeFileSync(
@@ -110,7 +120,7 @@ function render(
       .map(([k, v]) => `${k}=${v}`)
       .join("\n") + "\n",
   );
-  const run = compose(envFile, files);
+  const run = compose(envFile, files, cwd);
   expect(run.status, run.stderr).toBe(0);
   return JSON.parse(run.stdout) as Rendered;
 }
@@ -280,6 +290,82 @@ describe.skipIf(!composeAvailable)("Compose files", () => {
       dockerfile: "apps/api/Dockerfile",
     });
   });
+
+  // Topology (b): the site on this host too.
+  const siteEnv = { WEB_SITE: "http://web.localhost" };
+
+  it("the topology is selected by env", () => {
+    // From deploy/ with no -f, as on the VPS, where Compose reads COMPOSE_FILE
+    // from /srv/beselfos/.env itself.
+    const cwd = join(root, "deploy");
+    const names = (r: Rendered) => Object.keys(r.services).sort();
+    const on = render(
+      {
+        ...siteEnv,
+        COMPOSE_FILE: "docker-compose.yml:docker-compose.web.yml",
+      },
+      [],
+      cwd,
+    );
+    expect(names(on)).toEqual(["api", "caddy", "web"]);
+    // The same values without that line: (a), where the site is on Pages.
+    expect(names(render(siteEnv, [], cwd))).toEqual(["api", "caddy"]);
+  });
+
+  it("(b) gives Caddy the site and nothing else", () => {
+    const { caddy, web: site } = render(
+      {
+        ...siteEnv,
+        NEXT_PUBLIC_API_URL: "http://127.0.0.1:18999",
+        MEDIA_HOST_DIR: tempDir(),
+        RESEND_API_KEY: "resend-marker-139",
+      },
+      [base, web, local],
+    ).services;
+    expect(Object.keys(caddy.environment ?? {}).sort()).toEqual([
+      "API_SITE",
+      "WEB_SITE",
+    ]);
+    expect(volumeAt(caddy, "/etc/caddy/sites/web.caddy")).toHaveLength(1);
+    expect(volumeAt(caddy, "/etc/caddy/sites/web.caddy")[0]).toMatchObject({
+      read_only: true,
+      source: join(root, "deploy/web/site.caddy"),
+    });
+    expect(caddy.depends_on?.web?.condition).toBe("service_healthy");
+    // The API's secrets reach neither Caddy nor the site.
+    expect(JSON.stringify(caddy)).not.toContain("resend-marker-139");
+    expect(JSON.stringify(site)).not.toContain("resend-marker-139");
+    // The API origin is baked in at build time, so the site runs with none.
+    expect(site.environment).toBeUndefined();
+    expect(site.ports).toBeUndefined();
+    expect(site.build?.args?.NEXT_PUBLIC_API_URL).toBe(
+      "http://127.0.0.1:18999",
+    );
+  });
+
+  it("(b) needs WEB_SITE", () => {
+    const envFile = join(tempDir(), "env");
+    writeFileSync(
+      envFile,
+      Object.entries(required)
+        .map(([k, v]) => `${k}=${v}`)
+        .join("\n") + "\n",
+    );
+    const run = compose(envFile, [base, web]);
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toContain("WEB_SITE");
+  });
+
+  it("the host's Caddy with (b) gets the API and the site, and publishes nothing", () => {
+    const { services } = render(
+      { ...siteEnv, EDGE_NETWORK: "beself-test-edge" },
+      [base, web, edge],
+    );
+    expect(Object.keys(services).sort()).toEqual(["api", "web"]);
+    expect(services.web.networks?.edge?.aliases).toEqual(["beselfos-web"]);
+    expect(services.api.ports).toBeUndefined();
+    expect(services.web.ports).toBeUndefined();
+  });
 });
 
 describe("the Caddyfile", () => {
@@ -328,6 +414,8 @@ describe.skipIf(!caddyImage)("Caddy accepts", () => {
     ["deploy/Caddyfile", ["API_SITE=:80"]],
     ["deploy/edge/api.caddy", ["BESELFOS_API_SITE=:80"]],
     ["deploy/web/Caddyfile", ["API_ORIGIN=http://127.0.0.1:18999"]],
+    ["deploy/web/site.caddy", ["WEB_SITE=:80"]],
+    ["deploy/edge/web.caddy", ["BESELFOS_WEB_SITE=:80"]],
   ])(
     "%s",
     (file, env) => {
@@ -355,6 +443,40 @@ describe.skipIf(!caddyImage)("Caddy accepts", () => {
     },
     30_000,
   );
+
+  it("deploy/Caddyfile with the site block imported", () => {
+    // The mount Compose adds in topology (b), where the import finds it.
+    const run = spawnSync(
+      "docker",
+      [
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "-e",
+        "API_SITE=:80",
+        "-e",
+        "WEB_SITE=http://web.localhost",
+        "-v",
+        `${join(root, "deploy/Caddyfile")}:/etc/caddy/Caddyfile:ro`,
+        "-v",
+        `${join(root, "deploy/web/site.caddy")}:/etc/caddy/sites/web.caddy:ro`,
+        "caddy:2-alpine",
+        "caddy",
+        "adapt",
+        "--config",
+        "/etc/caddy/Caddyfile",
+        "--adapter",
+        "caddyfile",
+      ],
+      { encoding: "utf8" },
+    );
+    expect(run.status, run.stderr).toBe(0);
+    // Both blocks are in the result, and the import found its file.
+    expect(run.stdout).toContain("api:8080");
+    expect(run.stdout).toContain("web:8080");
+    expect(run.stderr).not.toContain("No files matching");
+  }, 30_000);
 });
 
 describe("shell scripts", () => {
@@ -642,6 +764,9 @@ describe("no domain is hard-coded", () => {
     expect(example).not.toMatch(/^COMPOSE_FILE=/m);
     expect(example).toContain(
       "# COMPOSE_FILE=docker-compose.yml:docker-compose.edge.yml",
+    );
+    expect(example).toContain(
+      "# COMPOSE_FILE=docker-compose.yml:docker-compose.web.yml",
     );
   });
 });

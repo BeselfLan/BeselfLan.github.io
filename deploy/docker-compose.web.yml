@@ -1,0 +1,16 @@
+# Topology (b) of #22: the site runs here too, at WEB_SITE, beside the API at
+# API_SITE. Use after docker-compose.yml, for example
+# COMPOSE_FILE=docker-compose.yml:docker-compose.web.yml in deploy/.env, and
+# append :docker-compose.edge.yml for a host that already runs a Caddy.
+services:
+  web:
+    # Turns the base file's profiled service on.
+    profiles: !reset []
+  caddy:
+    environment:
+      WEB_SITE: ${WEB_SITE:?set WEB_SITE in deploy/.env}
+    volumes:
+      - ./web/site.caddy:/etc/caddy/sites/web.caddy:ro
+    depends_on:
+      web:
+        condition: service_healthy
