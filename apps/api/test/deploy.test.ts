@@ -17,6 +17,19 @@ const local = join(root, "deploy/docker-compose.local.yml");
 const edge = join(root, "deploy/docker-compose.edge.yml");
 const read = (file: string) => readFileSync(join(root, file), "utf8");
 
+// The files under a folder that the repository tracks or would add: a new file
+// counts before it is committed, and a developer's own ignored deploy/.env does
+// not.
+function listed(dir: string): string[] {
+  const run = spawnSync(
+    "git",
+    ["ls-files", "--cached", "--others", "--exclude-standard", "--", dir],
+    { cwd: root, encoding: "utf8" },
+  );
+  expect(run.status, run.stderr).toBe(0);
+  return run.stdout.split("\n").filter((f) => f !== "");
+}
+
 // `docker compose config` only reads files, so it needs no daemon.
 const composeAvailable =
   spawnSync("docker", ["compose", "version"], { stdio: "ignore" }).status === 0;
@@ -343,6 +356,71 @@ describe.skipIf(!caddyImage)("Caddy accepts", () => {
   );
 });
 
+describe("shell scripts", () => {
+  const scripts = [...listed("deploy"), ...listed("scripts/media")].filter(
+    (f) => f.endsWith(".sh") && existsSync(join(root, f)),
+  );
+
+  it("are all found", () => {
+    expect(scripts).toEqual(
+      expect.arrayContaining([
+        "deploy/smoke.sh",
+        "deploy/vps-bootstrap.sh",
+        "scripts/media/convert.sh",
+        "scripts/media/sync.sh",
+      ]),
+    );
+  });
+
+  it.each(scripts)("%s parses", (file) => {
+    const run = spawnSync("bash", ["-n", join(root, file)], {
+      encoding: "utf8",
+    });
+    expect(run.status, run.stderr).toBe(0);
+  });
+
+  // The binary where there is one (CI's runner has it); else the image, which
+  // sees the repo read-only and has no network; else the check is skipped.
+  const image = "koalaman/shellcheck:stable";
+  const runner = ((): { cmd: string; args: string[] } | null => {
+    const has = (cmd: string, args: string[]) =>
+      spawnSync(cmd, args, { stdio: "ignore" }).status === 0;
+    if (has("shellcheck", ["--version"])) {
+      return { cmd: "shellcheck", args: scripts };
+    }
+    if (has("docker", ["image", "inspect", image])) {
+      return {
+        cmd: "docker",
+        args: [
+          "run",
+          "--rm",
+          "--network",
+          "none",
+          "-v",
+          `${root}:/mnt:ro`,
+          "-w",
+          "/mnt",
+          image,
+          ...scripts,
+        ],
+      };
+    }
+    return null;
+  })();
+
+  it.skipIf(runner === null)(
+    "pass shellcheck",
+    () => {
+      const run = spawnSync(runner!.cmd, runner!.args, {
+        cwd: root,
+        encoding: "utf8",
+      });
+      expect(run.status, `${run.stdout}${run.stderr}`).toBe(0);
+    },
+    30_000,
+  );
+});
+
 describe("the API image", () => {
   // Continued lines joined, comments and blanks dropped.
   const lines = read("apps/api/Dockerfile")
@@ -398,19 +476,32 @@ describe("no domain is hard-coded", () => {
     /\b[a-z0-9-]+(\.[a-z0-9-]+)*\.(com|net|org|io|dev|app|ca|co|me|xyz|cloud|site)\b/gi;
   const matches = (file: string) => read(file).match(domain) ?? [];
 
+  // apt's package for Docker Engine, not a host.
+  const allowed: Record<string, string[]> = {
+    "deploy/vps-bootstrap.sh": ["docker.io"],
+  };
+  // Every file under deploy/ but .env.example, which has its own tests below.
   const hosted = [
-    "deploy/docker-compose.yml",
-    "deploy/docker-compose.local.yml",
-    "deploy/Caddyfile",
+    ...listed("deploy").filter((f) => f !== "deploy/.env.example"),
     "apps/api/Dockerfile",
-    "deploy/smoke.sh",
-    ...readdirSync(join(root, "scripts/media")).map(
-      (f) => `scripts/media/${f}`,
-    ),
+    ...listed("scripts/media"),
   ].filter((f) => existsSync(join(root, f)));
 
+  it("looks at every deploy file", () => {
+    expect(hosted).toEqual(
+      expect.arrayContaining([
+        "deploy/Caddyfile",
+        "deploy/edge/api.caddy",
+        "deploy/smoke.sh",
+        "deploy/vps-bootstrap.sh",
+        "scripts/media/sync.sh",
+      ]),
+    );
+  });
+
   it.each(hosted)("%s", (file) => {
-    expect(matches(file)).toEqual([]);
+    const fine = allowed[file] ?? [];
+    expect(matches(file).filter((m) => !fine.includes(m))).toEqual([]);
   });
 
   it("deploy/.env.example names only example hosts", () => {
