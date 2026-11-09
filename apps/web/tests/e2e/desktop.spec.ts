@@ -722,3 +722,220 @@ test("on a phone the welcome points at the bottom dock", async ({ page }) => {
     expect(Math.abs(w.width - (box.width - 32))).toBeLessThanOrEqual(1);
   }).toPass();
 });
+
+// The keyboard (#102): Alt+Tab, and Tab through the desktop in plan 4.8's
+// order. Playwright sends keys straight to the page, so the OS that would take
+// Alt+Tab never sees them. openDesktop starts every session welcomed, so no
+// welcome toast joins the walk.
+
+test.describe("the keyboard", () => {
+  test.use({ viewport: { width: 1280, height: 800 } });
+
+  const frame = (page: Page, id: string) =>
+    page.locator(`[data-window-id="${id}"]`);
+  const strip = (page: Page) => page.locator("[data-alt-tab]");
+  const selected = (page: Page) =>
+    strip(page).getByRole("option", { selected: true });
+  // The window that holds keyboard focus, or null.
+  const focusedWindowId = (page: Page) =>
+    page.evaluate(
+      () =>
+        document.activeElement
+          ?.closest("[data-window-id]")
+          ?.getAttribute("data-window-id") ?? null,
+    );
+  const blurActive = (page: Page) =>
+    page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  // Which part of the desktop holds focus: the bar, the dock, a window's id.
+  const groupOfActive = (page: Page) =>
+    page.evaluate(() => {
+      const el = document.activeElement;
+      if (!el || el === document.body) return "none";
+      if (el.closest("[data-topbar]")) return "topbar";
+      if (el.closest("[data-dock]")) return "dock";
+      if (el.closest("[data-toasts]")) return "toasts";
+      return (
+        el.closest("[data-window-id]")?.getAttribute("data-window-id") ?? "?"
+      );
+    });
+  const isFocused = (locator: Locator) =>
+    locator.evaluate((el) => el === document.activeElement);
+
+  // Hello from the deep link, then Projects and About from the dock.
+  async function openThree(page: Page) {
+    await openDesktop(page, { path: "/?app=hello" });
+    await expect(frame(page, "hello")).toBeVisible({ timeout: 15_000 });
+    await dockIcon(page, "projects").click();
+    await expect(frame(page, "projects")).toBeVisible({ timeout: 15_000 });
+    await dockIcon(page, "about").click();
+    await expect(frame(page, "about")).toBeVisible({ timeout: 15_000 });
+    await expect(frame(page, "about")).toHaveAttribute("data-focused", "");
+  }
+
+  test("Alt+Tab cycles windows, and Esc cancels", async ({ page }) => {
+    await openThree(page);
+
+    // Alt held, Tab pressed: the strip shows, and the window before the front
+    // one is selected. Nothing is switched yet.
+    await page.keyboard.down("Alt");
+    await page.keyboard.press("Tab");
+    await expect(strip(page)).toBeVisible();
+    await expect(selected(page)).toContainText("Projects");
+    await expect(frame(page, "about")).toHaveAttribute("data-focused", "");
+
+    await page.keyboard.up("Alt");
+    await expect(frame(page, "projects")).toHaveAttribute("data-focused", "");
+    await expect(strip(page)).toHaveCount(0);
+    // Keyboard focus moved into the window too.
+    await expect.poll(() => focusedWindowId(page)).toBe("projects");
+
+    // A quick press and release goes back to About.
+    await page.keyboard.press("Alt+Tab");
+    await expect(frame(page, "about")).toHaveAttribute("data-focused", "");
+    await expect.poll(() => focusedWindowId(page)).toBe("about");
+
+    // Two presses reach the third window, Hello.
+    await page.keyboard.down("Alt");
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Tab");
+    await expect(selected(page)).toContainText("Hello");
+    await page.keyboard.up("Alt");
+    await expect(frame(page, "hello")).toHaveAttribute("data-focused", "");
+    await expect.poll(() => focusedWindowId(page)).toBe("hello");
+
+    // Escape closes the strip and changes nothing.
+    await page.keyboard.down("Alt");
+    await page.keyboard.press("Tab");
+    await expect(strip(page)).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(strip(page)).toHaveCount(0);
+    await page.keyboard.up("Alt");
+    await expect(frame(page, "hello")).toHaveAttribute("data-focused", "");
+    await expect(strip(page)).toHaveCount(0);
+  });
+
+  test("Alt+Tab brings back a minimised window", async ({ page }) => {
+    await openDesktop(page, { path: "/?app=hello" });
+    await expect(frame(page, "hello")).toBeVisible({ timeout: 15_000 });
+    await dockIcon(page, "about").click();
+    await expect(frame(page, "about")).toHaveAttribute("data-focused", "");
+
+    await frame(page, "hello")
+      .getByRole("button", { name: "Minimise", exact: true })
+      .click();
+    await expect(frame(page, "hello")).toBeHidden();
+    await blurActive(page);
+
+    // Hello is listed though it is minimised. Hold Alt and press Tab until it
+    // is the selected option, then let go. The built-in cycleFocus would skip
+    // it, with no strip at all.
+    await page.keyboard.down("Alt");
+    for (let i = 0; i < 3; i++) {
+      await page.keyboard.press("Tab");
+      await expect(strip(page)).toBeVisible();
+      if ((await selected(page).textContent())?.includes("Hello")) break;
+    }
+    await expect(selected(page)).toContainText("Hello");
+    await page.keyboard.up("Alt");
+
+    await expect(frame(page, "hello")).toBeVisible();
+    await expect(frame(page, "hello")).toHaveAttribute("data-focused", "");
+    // The frame is drawn before the focus moves into it (flushSync): focus on
+    // a box that is still hidden would stay on the body.
+    await expect.poll(() => focusedWindowId(page)).toBe("hello");
+  });
+
+  test("Tab goes top bar, dock, then windows by z, and the dock opens an app", async ({
+    page,
+  }) => {
+    await openDesktop(page, { path: "/?app=hello" });
+    await expect(frame(page, "hello")).toBeVisible({ timeout: 15_000 });
+    await dockIcon(page, "about").click();
+    await expect(frame(page, "about")).toHaveAttribute("data-focused", "");
+    await blurActive(page);
+
+    // From nothing, the first Tab is the top bar's first control.
+    await page.keyboard.press("Tab");
+    const activities = page.getByRole("button", {
+      name: "Activities",
+      exact: true,
+    });
+    await expect(activities).toBeFocused();
+
+    // On to the end of the walk and round again. About is in front, so its
+    // controls come before Hello's. The DOM has the windows before the bar
+    // (#77); the walk does not follow it.
+    const groups = ["topbar"];
+    for (let i = 0; i < 80; i++) {
+      await page.keyboard.press("Tab");
+      groups.push(await groupOfActive(page));
+      if (await isFocused(activities)) break;
+    }
+    await expect(activities).toBeFocused();
+    expect(groups.filter((g, i) => i === 0 || g !== groups[i - 1])).toEqual([
+      "topbar",
+      "dock",
+      "about",
+      "hello",
+      "topbar",
+    ]);
+
+    // Keyboard only: Tab to Projects in the dock, and Enter opens it.
+    const projects = dockIcon(page, "projects");
+    for (let i = 0; i < 20; i++) {
+      await page.keyboard.press("Tab");
+      if (await isFocused(projects)) break;
+    }
+    await expect(projects).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(frame(page, "projects")).toBeVisible({ timeout: 15_000 });
+  });
+
+  test("Tab walks a video's native controls, then goes on to the next window", async ({
+    page,
+  }) => {
+    // The controls sit in the browser's closed shadow root: the page sees only
+    // the <video> as the active element while focus is among them, and a
+    // focusin only when it leaves. So this needs a real browser and a real
+    // video: jsdom focuses neither.
+    await openDesktop(page, { path: "/?app=projects&item=deadknight" });
+    const play = frame(page, "projects")
+      .locator("[data-detail-panel]")
+      .getByRole("button", { name: "Play demo", exact: true });
+    await expect(play).toHaveAttribute("data-media", "ready", {
+      timeout: 15_000,
+    });
+    await play.click();
+    const demo = frame(page, "video-player:deadknight");
+    await expect(demo.locator('[data-video-state="ready"]')).toBeVisible({
+      timeout: 15_000,
+    });
+    const video = demo.locator("video");
+    const onVideo = () => isFocused(video);
+
+    await video.focus();
+    expect(await onVideo()).toBe(true);
+
+    // The first Tab goes into the native controls (the play button), so the
+    // video is still the active element. A desktop that moved on at once would
+    // skip them all.
+    await page.keyboard.press("Tab");
+    expect(await onVideo()).toBe(true);
+
+    // On through the rest of the controls. Leaving them is the browser's Tab,
+    // which would land on Activities, after the windows in the DOM; the
+    // desktop takes it on to the next window by z: Projects, behind the player.
+    for (let i = 0; i < 10 && (await onVideo()); i++) {
+      await page.keyboard.press("Tab");
+    }
+    expect(await onVideo()).toBe(false);
+    await expect.poll(() => focusedWindowId(page)).toBe("projects");
+    await expect(frame(page, "projects")).toHaveAttribute("data-focused", "");
+
+    // One video at a time: the host is short on memory. Projects is in front of
+    // the player now, so Close is pressed from the keyboard, not clicked.
+    await demo.getByRole("button", { name: "Close", exact: true }).focus();
+    await page.keyboard.press("Enter");
+    await expect(demo).toHaveCount(0);
+  });
+});
