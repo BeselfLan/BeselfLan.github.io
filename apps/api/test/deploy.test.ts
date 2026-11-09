@@ -323,12 +323,14 @@ const caddyImage =
   }).status === 0;
 
 describe.skipIf(!caddyImage)("Caddy accepts", () => {
-  it.each([
-    ["deploy/Caddyfile", "API_SITE"],
-    ["deploy/edge/api.caddy", "BESELFOS_API_SITE"],
+  // Each row is a file and the KEY=value pairs its placeholders need.
+  it.each<[string, string[]]>([
+    ["deploy/Caddyfile", ["API_SITE=:80"]],
+    ["deploy/edge/api.caddy", ["BESELFOS_API_SITE=:80"]],
+    ["deploy/web/Caddyfile", ["API_ORIGIN=http://127.0.0.1:18999"]],
   ])(
     "%s",
-    (file, key) => {
+    (file, env) => {
       const run = spawnSync(
         "docker",
         [
@@ -336,8 +338,7 @@ describe.skipIf(!caddyImage)("Caddy accepts", () => {
           "--rm",
           "--network",
           "none",
-          "-e",
-          `${key}=:80`,
+          ...env.flatMap((pair) => ["-e", pair]),
           "-v",
           `${join(root, file)}:/etc/caddy/Caddyfile:ro`,
           "caddy:2-alpine",
@@ -469,6 +470,107 @@ describe("the API image", () => {
         "!packages/content/src/schema.ts",
       ].sort(),
     );
+  });
+});
+
+describe("the site image", () => {
+  // Continued lines joined, comments and blanks dropped.
+  const lines = read("deploy/web/Dockerfile")
+    .replace(/\\\n/g, " ")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l !== "" && !l.startsWith("#"));
+  const froms = lines.flatMap((l, i) => (l.startsWith("FROM ") ? [i] : []));
+  const build = lines.slice(froms[0], froms[1]);
+  const last = lines.slice(froms[froms.length - 1]);
+
+  it("serves the export from caddy:2-alpine, as a user that is not root", () => {
+    expect(froms).toHaveLength(2);
+    expect(last[0]).toBe("FROM caddy:2-alpine");
+    const users = last.filter((l) => l.startsWith("USER "));
+    expect(users).toHaveLength(1);
+    expect(users[0]).not.toMatch(/^USER (root|0)\b/);
+    expect(last.some((l) => l.startsWith("HEALTHCHECK "))).toBe(true);
+    expect(last).toContain("EXPOSE 8080");
+    expect(last.some((l) => l.startsWith("ENV API_ORIGIN="))).toBe(true);
+    // Only Caddy and the export: no Node in the image that is run.
+    expect(last.join("\n")).not.toContain("npm");
+  });
+
+  it("installs only the web workspace, and takes the API origin after the install", () => {
+    const install = build.findIndex((l) => l.includes("npm ci"));
+    expect(install).toBeGreaterThan(-1);
+    expect(build[install]).toContain("npm ci --workspace web");
+    const arg = build.findIndex((l) => l.startsWith("ARG NEXT_PUBLIC_API_URL"));
+    // Above the install, every change of origin would run the install again.
+    expect(arg).toBeGreaterThan(install);
+  });
+
+  it("copies only an allowlist out of the repo root", () => {
+    const ignore = read("deploy/web/Dockerfile.dockerignore")
+      .split("\n")
+      .filter((l) => l.trim() !== "" && !l.startsWith("#"));
+    expect(ignore).toEqual([
+      "*",
+      "!package.json",
+      "!package-lock.json",
+      "!apps/api/package.json",
+      "!apps/web/package.json",
+      "!apps/web/next.config.ts",
+      "!apps/web/tsconfig.json",
+      "!apps/web/src",
+      "!apps/web/public",
+      "!packages/content/package.json",
+      "!packages/content/src",
+      "!deploy/web/Caddyfile",
+      "apps/web/src/**/*.test.*",
+      "packages/content/src/**/*.test.*",
+    ]);
+    // Never the whole of a folder that holds private or unneeded files.
+    for (const line of ignore) {
+      expect(line).not.toMatch(/^!(\.|docs|apps\/web$|media-src)/);
+    }
+  });
+});
+
+describe("the site's headers", () => {
+  // Comment lines hold words like 'unsafe-eval' on purpose.
+  const caddyfile = read("deploy/web/Caddyfile")
+    .split("\n")
+    .filter((l) => !l.trim().startsWith("#"))
+    .join("\n");
+
+  it("sets seven security headers on every response", () => {
+    for (const name of [
+      "Content-Security-Policy",
+      "Strict-Transport-Security",
+      "X-Content-Type-Options",
+      "X-Frame-Options",
+      "Referrer-Policy",
+      "Permissions-Policy",
+      "Cross-Origin-Opener-Policy",
+    ]) {
+      expect(caddyfile, name).toMatch(new RegExp(`^\\s+${name} "`, "m"));
+    }
+  });
+
+  it("lets the page reach its own origin and the API origin, and nothing else", () => {
+    for (const text of [
+      "connect-src 'self' {$API_ORIGIN}",
+      "media-src 'self' {$API_ORIGIN}",
+      "img-src 'self' data: {$API_ORIGIN}",
+      "frame-ancestors 'none'",
+      "object-src 'none'",
+    ]) {
+      expect(caddyfile, text).toContain(text);
+    }
+    expect(caddyfile).not.toContain("unsafe-eval");
+  });
+
+  it("answers a missing page with 404.html, and caches only hashed names for good", () => {
+    expect(caddyfile).toContain("handle_errors 404");
+    expect(caddyfile).toContain("public, max-age=31536000, immutable");
+    expect(caddyfile).toContain('"no-cache"');
   });
 });
 

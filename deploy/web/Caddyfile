@@ -1,0 +1,37 @@
+# The site image's own config (deploy/web/Dockerfile): the static export in /srv
+# on :8080, behind whichever Caddy is in front. The headers live here, so they
+# travel with the image. API_ORIGIN is the API's origin, set when the image is
+# built, and the only other origin the page may load from or talk to.
+{
+	admin off
+	auto_https off
+	persist_config off
+}
+
+:8080 {
+	root * /srv
+	encode zstd gzip
+	# 'unsafe-inline' for scripts: the export inlines its RSC payload. No
+	# 'unsafe-eval': Zod tries it once, is blocked, and falls back.
+	header {
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: {$API_ORIGIN}; media-src 'self' {$API_ORIGIN}; connect-src 'self' {$API_ORIGIN}; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+		# No includeSubDomains: other hosts on the domain are not forced to HTTPS.
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+		Cross-Origin-Opener-Policy "same-origin"
+	}
+	# Two named matchers, so their order cannot matter. Only /_next/static/ names
+	# are content-hashed.
+	@static path /_next/static/*
+	header @static Cache-Control "public, max-age=31536000, immutable"
+	@other not path /_next/static/*
+	header @other Cache-Control "no-cache"
+	file_server
+	handle_errors 404 {
+		rewrite * /404.html
+		file_server
+	}
+}
