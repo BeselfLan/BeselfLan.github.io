@@ -1,4 +1,4 @@
-# The backend: the API behind one Caddy, and a media volume both can see.
+# The backend: the API behind one Caddy, and a media folder both can see.
 # Values come from deploy/.env (copy deploy/.env.example). For a laptop run
 # add -f deploy/docker-compose.local.yml; deploy/smoke.sh shows the commands.
 name: beselfos
@@ -17,7 +17,9 @@ services:
       DMOJ_USER: ${DMOJ_USER:-}
       GITHUB_USER: ${GITHUB_USER:-}
     volumes:
-      - media:/media
+      # A host folder, so scripts/media/sync.sh can reach it over SSH: media/
+      # next to this file (/srv/beselfos/media on the VPS) by default.
+      - ${MEDIA_HOST_DIR:-./media}:/media
     # No ports. The API trusts one proxy hop, so a client that reached it
     # directly could choose its own address and skip the contact rate limit.
     mem_limit: 256m
@@ -35,11 +37,10 @@ services:
       - "${HTTPS_PORT:-443}:443/udp"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - media:/media:ro
+      - ${MEDIA_HOST_DIR:-./media}:/media:ro
       - caddy_data:/data
       - caddy_config:/config
     mem_limit: 128m
 volumes:
-  media:
   caddy_data:
   caddy_config:

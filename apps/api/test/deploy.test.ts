@@ -27,6 +27,7 @@ interface Port {
   protocol: string;
 }
 interface Volume {
+  type?: string;
   target: string;
   source?: string;
   read_only?: boolean;
@@ -181,6 +182,28 @@ describe.skipIf(!composeAvailable)("Compose files", () => {
     const { caddy } = render().services;
     expect(volumeAt(caddy, "/media")).toHaveLength(1);
     expect(volumeAt(caddy, "/media")[0].read_only).toBe(true);
+  });
+
+  it("bind the media folder next to the compose file by default", () => {
+    const { api, caddy } = render().services;
+    for (const service of [api, caddy]) {
+      expect(volumeAt(service, "/media")).toHaveLength(1);
+      expect(volumeAt(service, "/media")[0]).toMatchObject({
+        type: "bind",
+        source: join(root, "deploy/media"),
+      });
+    }
+    expect(volumeAt(caddy, "/media")[0].read_only).toBe(true);
+    expect(volumeAt(api, "/media")[0].read_only).not.toBe(true);
+  });
+
+  it("MEDIA_HOST_DIR moves both mounts", () => {
+    const media = tempDir();
+    const { api, caddy } = render({ MEDIA_HOST_DIR: media }).services;
+    for (const service of [api, caddy]) {
+      expect(volumeAt(service, "/media")).toHaveLength(1);
+      expect(volumeAt(service, "/media")[0].source).toBe(media);
+    }
   });
 
   it("mount the chosen media folder once, locally", () => {
