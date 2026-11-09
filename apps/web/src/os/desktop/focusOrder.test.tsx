@@ -40,7 +40,9 @@ function content(id: string): ReactNode {
   }
   if (id === "x") {
     // What Tab must pass over: a disabled button, a negative tabindex, a box
-    // that is not drawn, and a hidden input, before the one real control.
+    // that is not drawn, a hidden input, hidden and inert subtrees, before the
+    // one real control. jsdom focuses inert elements, so only the filter keeps
+    // x-inert out.
     return (
       <div>
         <button disabled>x-disabled</button>
@@ -51,6 +53,9 @@ function content(id: string): ReactNode {
         <input type="hidden" />
         <div hidden>
           <button>x-hidden</button>
+        </div>
+        <div inert>
+          <button>x-inert</button>
         </div>
         <button>x-ok</button>
       </div>
@@ -126,7 +131,9 @@ function groupOf(el: Element | null): string {
 function walk(stop: (el: Element | null) => boolean, limit = 60): string[] {
   const seen: string[] = [];
   for (let i = 0; i < limit; i++) {
-    tab();
+    // Each Tab that moved the focus is the handler's: the browser must not
+    // also move it.
+    expect(tab().defaultPrevented, `Tab ${i + 1}`).toBe(true);
     seen.push(groupOf(document.activeElement));
     if (stop(document.activeElement)) break;
   }
@@ -241,6 +248,7 @@ describe("useFocusOrder", () => {
       "x-negative",
       "x-undrawn",
       "x-hidden",
+      "x-inert",
     ]) {
       expect(names, never).not.toContain(never);
     }

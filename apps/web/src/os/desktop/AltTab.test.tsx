@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
+import { Profiler } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { appLookup } from "@/os/apps/registry";
 import { installShortcuts } from "@/os/input/shortcuts";
@@ -56,6 +57,23 @@ const altTab = (over: KeyboardEventInit = {}) =>
 const releaseAlt = () => fireEvent.keyUp(document.body, { key: "Alt" });
 
 describe("Alt+Tab", () => {
+  it("renders nothing while closed, however the windows change", () => {
+    let commits = 0;
+    render(
+      <Screen>
+        <Profiler id="alt-tab" onRender={() => void commits++}>
+          <AltTab />
+        </Profiler>
+      </Screen>,
+    );
+    open("hello", "about");
+    const before = commits;
+    // A drag moves a window on every frame.
+    act(() => os.windows.moveWindow("hello", { x: 10, y: 20 }));
+    act(() => os.windows.moveWindow("hello", { x: 30, y: 40 }));
+    expect(commits).toBe(before);
+  });
+
   it("opens on the next window and commits on release", () => {
     mount();
     open("hello", "about", "projects");

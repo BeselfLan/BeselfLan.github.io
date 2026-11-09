@@ -1,5 +1,13 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from "vitest";
 import { staticContent } from "@/content/static";
 import { installShortcuts } from "@/os/input/shortcuts";
 import { Screen } from "@/os/screen/Screen";
@@ -147,7 +155,8 @@ describe("Desktop", () => {
 
   it("puts the Alt+Tab strip last, in the root with the rest", () => {
     register({ id: "a" }, { id: "b" });
-    const uninstall = installShortcuts();
+    // Removed even if an assertion below fails, so no other test hears it.
+    onTestFinished(installShortcuts());
     mount();
     act(() => {
       os.windows.openApp("a");
@@ -157,7 +166,6 @@ describe("Desktop", () => {
     fireEvent.keyDown(document.body, { key: "Tab", altKey: true });
     const strip = q("[data-alt-tab]")!;
     expect(strip).not.toBeNull();
-    uninstall();
 
     // After the grid and the menu host, so the strip paints over everything.
     expect(before(q("#desktop-app-grid")!, strip)).toBe(true);

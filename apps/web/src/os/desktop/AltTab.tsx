@@ -152,9 +152,20 @@ export function AltTab() {
     controller.get,
     controller.get,
   );
+  return ids === null ? null : <Strip ids={ids} controller={controller} />;
+}
+
+// Its own component, so the windows are read only while the strip is open: a
+// window drag changes `windows.items` every frame.
+function Strip({
+  ids,
+  controller,
+}: {
+  ids: readonly string[];
+  controller: ReturnType<typeof createController>;
+}) {
   const selected = useOS((s) => s.shell.altTabIndex);
   const items = useOS((s) => s.windows.items);
-  if (ids === null) return null;
 
   // A window that has gone since the strip opened renders nothing.
   const options = ids.flatMap((id, position) => {
