@@ -602,3 +602,97 @@ test("Play says Demo offline when the media is unavailable", async ({
   await play(page).locator("xpath=..").hover();
   await expect(page.getByRole("tooltip")).toHaveText("Demo offline");
 });
+
+// The demo window (#118). It reuses the fixture manifest above, so no demo file
+// has to exist: the fixture's source type is one the browser rejects without a
+// request, which takes the player from loading to ready to error. Real
+// playback is the next issue's.
+
+const player = (page: Page, id: string) =>
+  page.locator(`[data-window-id="video-player:${id}"]`);
+
+test("the demo window is titled after the entry, with minimise and close, and shows the error with Retry", async ({
+  page,
+}) => {
+  await routeManifest(page, FIXTURE_MANIFEST);
+  await openProjects(page, "&item=deadknight");
+  await expect(play(page)).toHaveAttribute("data-media", "ready", {
+    timeout: 15_000,
+  });
+  await play(page).click();
+
+  const demo = player(page, "deadknight");
+  await expect(demo).toBeVisible({ timeout: 15_000 });
+  // The title comes from the args Play sends, not from the id.
+  await expect(demo.locator("[data-titlebar] h2")).toHaveText(
+    "DeadKnight -- Roguelite Platformer -- Demo",
+  );
+  await expect(
+    demo.getByRole("button", { name: "Minimise", exact: true }),
+  ).toBeVisible();
+  await expect(
+    demo.getByRole("button", { name: "Close", exact: true }),
+  ).toBeVisible();
+  await expect(
+    demo.getByRole("button", { name: "Maximise", exact: true }),
+  ).toHaveCount(0);
+
+  // 880 by 540 screen units, whatever the scale.
+  const box = await settle(demo);
+  const wanted = 880 / 540;
+  expect(
+    Math.abs(box.width / box.height - wanted) / wanted,
+  ).toBeLessThanOrEqual(0.01);
+
+  // Chromium fires `error` on the rejected <source>. It reaches the player
+  // only if the <video> mounted with the fixture source.
+  const failed = demo.locator('[data-video-state="error"]');
+  await expect(failed).toBeVisible({ timeout: 15_000 });
+  await expect(failed.getByText("This demo could not load.")).toBeVisible();
+  await expect(
+    failed.getByRole("button", { name: "Retry", exact: true }),
+  ).toBeVisible();
+});
+
+test("one window per demo, and two demos side by side", async ({ page }) => {
+  await routeManifest(page, FIXTURE_MANIFEST);
+  await openProjects(page, "&item=deadknight");
+  await expect(play(page)).toHaveAttribute("data-media", "ready", {
+    timeout: 15_000,
+  });
+  await play(page).click();
+
+  const first = player(page, "deadknight");
+  await expect(first).toBeVisible({ timeout: 15_000 });
+  await first.getByRole("button", { name: "Minimise", exact: true }).click();
+  await expect(first).toBeHidden();
+
+  // Playing the same demo again raises its window; it does not open a second.
+  await play(page).click();
+  await expect(first).toHaveCount(1);
+  await expect(first).toBeVisible();
+
+  // Another entry gets its own window, next to the first.
+  await first.getByRole("button", { name: "Minimise", exact: true }).click();
+  await expect(first).toBeHidden();
+  await inFront(page).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(inFront(page)).toHaveAttribute("data-entry-id", "3d-engine");
+  await page.keyboard.press("Enter");
+  await expect(
+    panel(page).getByRole("heading", {
+      level: 3,
+      name: "3D Software Rasterizer",
+    }),
+  ).toBeVisible();
+  await expect(play(page)).toHaveAttribute("data-media", "ready", {
+    timeout: 15_000,
+  });
+  await play(page).click();
+
+  await expect(player(page, "3d-engine")).toBeVisible({ timeout: 15_000 });
+  await expect(player(page, "deadknight")).toHaveCount(1);
+  await expect(page.locator('[data-window-id^="video-player:"]')).toHaveCount(
+    2,
+  );
+});
