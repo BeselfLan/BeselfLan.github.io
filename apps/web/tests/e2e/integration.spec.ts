@@ -1,5 +1,5 @@
-import { content } from "@beself/content";
-import { expect, test } from "@playwright/test";
+import { content, featuredEntries } from "@beself/content";
+import { expect, test, type Page } from "@playwright/test";
 import { createReadStream } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import http from "node:http";
@@ -434,4 +434,119 @@ test("the built output holds no phone-number or street-address shapes", async ()
     ),
   );
   expect(notes).toEqual([]);
+});
+
+// -- What counts as a failure -------------------------------------------------
+
+// A defect in another area is filed as a bug for its owner and listed here, so
+// this file stays green without loosening the guard: an entry excuses only the
+// problems it matches, and never applies to the scan above (plan call 4). It
+// starts empty.
+const KNOWN_BUGS: { issue: string; match: RegExp }[] = [];
+
+/**
+ * Records every console error, page error, failed request, response of 400 or
+ * more, and request to another origin. The export has to stand alone on Pages.
+ * The one allowance is a cancelled download under /media/: the player cancels
+ * its download when its window closes (plan 5.5), and Chromium also cancels a
+ * `preload="metadata"` fetch once it has the metadata. A demo that is missing
+ * still fails, on its 404.
+ *
+ * With JavaScript off, Playwright blocks scripts by a content security policy
+ * (the error text is "csp"), and Chromium has already queued the preload of
+ * one chunk. That block is the test setup, not the site, so it is allowed for
+ * a script, and only then.
+ */
+function guard(page: Page, { scripts }: { scripts: boolean }): string[] {
+  const problems: string[] = [];
+  const own = new Set([origin]);
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    own.add(new URL(process.env.NEXT_PUBLIC_API_URL).origin);
+  }
+  page.on("console", (msg) => {
+    if (msg.type() === "error") problems.push(`console ${msg.text()}`);
+  });
+  page.on("pageerror", (err) => problems.push(`pageerror ${err.message}`));
+  page.on("requestfailed", (req) => {
+    const error = req.failure()?.errorText ?? "unknown";
+    const { pathname } = new URL(req.url());
+    if (error === "net::ERR_ABORTED" && pathname.startsWith("/media/")) return;
+    if (!scripts && error === "csp" && pathname.endsWith(".js")) return;
+    problems.push(`requestfailed ${error} ${req.url()}`);
+  });
+  page.on("response", (res) => {
+    if (res.status() >= 400)
+      problems.push(`response ${res.status()} ${res.url()}`);
+  });
+  page.on("request", (req) => {
+    const url = new URL(req.url());
+    if (url.protocol === "data:" || url.protocol === "blob:") return;
+    if (!own.has(url.origin)) problems.push(`other origin ${req.url()}`);
+  });
+  return problems;
+}
+
+const unexcused = (problems: string[]): string[] =>
+  problems.filter((p) => !KNOWN_BUGS.some((bug) => bug.match.test(p)));
+
+// -- The page ---------------------------------------------------------------
+// The tests that open a page share the guard. The scan above opens none.
+
+test.describe("the page", () => {
+  let problems: string[] = [];
+  test.beforeEach(({ page, javaScriptEnabled }) => {
+    problems = guard(page, { scripts: javaScriptEnabled });
+  });
+  test.afterEach(() => {
+    expect(unexcused(problems)).toEqual([]);
+  });
+
+  test.describe("without JavaScript", () => {
+    test.use({ javaScriptEnabled: false });
+
+    test("the noscript fallback lists the featured projects and the email link", async ({
+      page,
+    }) => {
+      await page.goto(`${origin}/`);
+      const fallback = page.locator("[data-noscript-fallback]");
+      await expect(fallback).toBeVisible();
+      await expect(fallback).toContainText("needs JavaScript");
+      await expect(
+        fallback.getByRole("heading", { level: 2, name: profile.name }),
+      ).toBeVisible();
+      await expect(fallback.getByText(profile.tagline)).toBeVisible();
+
+      const mail = fallback.locator(`a[href="mailto:${profile.email}"]`);
+      await expect(mail).toHaveText(profile.email);
+      // The overlay is on top of the laptop, so the pointer reaches the link.
+      // Trial: it checks the hit target and does not click.
+      await mail.click({ trial: true, timeout: 5_000 });
+      await expect(
+        fallback.locator(`a[href="${profile.github}"]`),
+      ).toBeVisible();
+
+      // The Projects app's default view: Featured, in its order.
+      const featured = featuredEntries();
+      const items = fallback
+        .getByRole("list", { name: "Projects" })
+        .getByRole("listitem");
+      await expect(items).toHaveCount(featured.length);
+      for (const [i, entry] of featured.entries()) {
+        const item = items.nth(i);
+        await expect(item, entry.id).toContainText(entry.title);
+        await expect(item, entry.id).toContainText(entry.summary);
+        const link = item.locator("a");
+        if (entry.links.github === undefined) {
+          await expect(link, entry.id).toHaveCount(0);
+        } else {
+          await expect(link, entry.id).toHaveAttribute(
+            "href",
+            entry.links.github,
+          );
+        }
+      }
+
+      await expect(page.locator('a[href^="tel:"]')).toHaveCount(0);
+    });
+  });
 });
