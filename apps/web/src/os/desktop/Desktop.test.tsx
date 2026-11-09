@@ -1,10 +1,12 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { staticContent } from "@/content/static";
+import { installShortcuts } from "@/os/input/shortcuts";
 import { Screen } from "@/os/screen/Screen";
 import { os, useOS } from "@/os/store";
 import { FakeResizeObserver } from "../../../tests/unit/helpers/browser";
 import {
+  register,
   setupBrowser,
   teardownBrowser,
 } from "../../../tests/unit/window/mountLayer";
@@ -141,6 +143,32 @@ describe("Desktop", () => {
     expect(toasts.parentElement).toBe(
       q('[data-testid="layer"]')!.parentElement,
     );
+  });
+
+  it("puts the Alt+Tab strip last, in the root with the rest", () => {
+    register({ id: "a" }, { id: "b" });
+    const uninstall = installShortcuts();
+    mount();
+    act(() => {
+      os.windows.openApp("a");
+      os.windows.openApp("b");
+    });
+    expect(document.querySelector("[data-alt-tab]")).toBeNull();
+    fireEvent.keyDown(document.body, { key: "Tab", altKey: true });
+    const strip = q("[data-alt-tab]")!;
+    expect(strip).not.toBeNull();
+    uninstall();
+
+    // After the grid and the menu host, so the strip paints over everything.
+    expect(before(q("#desktop-app-grid")!, strip)).toBe(true);
+    expect(before(q("[data-toasts]")!, strip)).toBe(true);
+    expect(before(q('[data-testid="layer"]')!, strip)).toBe(true);
+    // In the root with the rest, and the root adds nothing to the stacking.
+    const root = q('[data-testid="layer"]')!.parentElement!;
+    expect(root.contains(strip)).toBe(true);
+    expect(root.style.zIndex).toBe("");
+    expect(root.className).not.toMatch(/(^|\s)(isolate|-?z-\S+)/);
+    expect(document.querySelectorAll("[data-alt-tab]")).toHaveLength(1);
   });
 
   it("shows a pushed notification as a toast", () => {
