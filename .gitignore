@@ -3,6 +3,7 @@ node_modules/
 out/
 media-src/
 apps/api/media/
+deploy/media/
 .env*
 !.env.example
 playwright-report/
