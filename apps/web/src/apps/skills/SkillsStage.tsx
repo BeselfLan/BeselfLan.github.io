@@ -3,6 +3,7 @@
 import type { Skill } from "@beself/content";
 import { useReducedMotionConfig } from "motion/react";
 import {
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -34,6 +35,11 @@ import { useSkillsWorld, type SkillsWorldOptions } from "./useSkillsWorld";
 // share one path. The arrows, Home and End move the focus between the icons,
 // and the tab stop roves. It uses neither `useScreen()` nor the Tooltip: both
 // throw outside a Screen, where registry.test.ts renders every app.
+//
+// The detail panel (#90) is SkillsApp's, beside this stage. This component only
+// tells the loop when the panel's wall is in (`wall`), which slides the walls
+// of the world with the panel, and marks the open icon for assistive
+// technology (`aria-expanded`, and `aria-controls` naming the panel).
 
 export interface SkillsStageProps {
   skills: readonly Skill[];
@@ -42,6 +48,10 @@ export interface SkillsStageProps {
   api: SkillsWorldOptions["api"];
   /** The icon radius, in screen units. */
   radius: number;
+  /** The id of the detail panel, which the open icon's `aria-controls` names. */
+  panelId: string;
+  /** True while the panel is open over the stage: the world's right wall is in. */
+  wall: boolean;
 }
 
 // A press in progress. The stage's rectangle and the screen's scale are
@@ -73,11 +83,21 @@ export function SkillsStage({
   onSelect,
   api,
   radius,
+  panelId,
+  wall,
 }: SkillsStageProps) {
   const stageRef = useRef<HTMLDivElement>(null);
   const ids = useMemo(() => skills.map((s) => s.id), [skills]);
   const world = useSkillsWorld({ api, ids, radius, stageRef });
   const reduced = useReducedMotionConfig() ?? false;
+
+  // The panel's wall (6.5): it slides with the panel, or arrives at once under
+  // reduced motion. It follows `wall` and `api`, because a loop rebuilt for a
+  // new api starts with the wall out. After `useSkillsWorld`, so the loop exists.
+  useLayoutEffect(() => {
+    world.loop.current?.setWall(wall, undefined, { instant: reduced });
+  }, [wall, reduced, api, world.loop]);
+
   const [focusId, setFocusId] = useState<string | null>(null);
   const [tracker] = useState(createVelocityTracker);
   // Written only in handlers, never in render.
@@ -211,6 +231,8 @@ export function SkillsStage({
             type="button"
             data-skill-id={s.id}
             data-selected={s.id === selectedId ? "" : undefined}
+            aria-expanded={s.id === selectedId}
+            aria-controls={s.id === selectedId ? panelId : undefined}
             tabIndex={s.id === tabStop ? 0 : -1}
             className="skills-icon"
             // The loop owns `transform`: only the size goes here.

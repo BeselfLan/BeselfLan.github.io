@@ -1,9 +1,10 @@
 // The stage and panel geometry of the Skills app (plan 6.5, 6.6). All lengths
 // are screen units and all times milliseconds. Pure numbers: no React, no DOM.
 //
-// #90 slides the panel in and calls `setBounds(wallRect(stage, p))` on the
-// physics world on every frame of the slide, with `p = panelProgress(elapsed)`
-// opening and `1 - p` closing, so the icons are pushed along by the wall.
+// #90 slides the panel in: stageLoop.ts sets the physics world's walls to
+// `wallRect(stage, p)` on every frame of the slide, with
+// `p = panelProgress(elapsed)` opening and `1 - p` closing, so the icons are
+// pushed along by the wall.
 
 import type { Rect } from "./physics/body";
 
@@ -40,13 +41,17 @@ export function stageRect(content: { width: number; height: number }): Rect {
 /**
  * The wall of the world while the panel slides: the stage with the panel's
  * share cut off its right side. `progress` is 0 (no panel) to 1 (the panel
- * fully in) and is clamped to that, and the width never goes negative. Only
- * the width changes.
+ * fully in) and is clamped to that, a `NaN` counts as 0, and the width never
+ * goes negative. Only the width changes.
  */
 export function wallRect(stage: Rect, progress: number): Rect {
   return {
     ...stage,
-    width: Math.max(0, stage.width - PANEL_WIDTH * clamp(progress, 0, 1)),
+    width: Math.max(
+      0,
+      stage.width -
+        PANEL_WIDTH * clamp(Number.isNaN(progress) ? 0 : progress, 0, 1),
+    ),
   };
 }
 

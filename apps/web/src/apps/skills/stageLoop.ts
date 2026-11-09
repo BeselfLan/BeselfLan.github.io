@@ -1,4 +1,5 @@
 import type { Body, BodyId, Rect, Vec } from "./physics/body";
+import { panelProgress, wallRect } from "./layout";
 import { ICON_RADIUS } from "./physics/constants";
 import { createRng } from "./physics/rng";
 import { spawnPositions } from "./physics/spawn";
@@ -16,6 +17,12 @@ import { createPhysicsWorld } from "./physics/world";
 // fallback. A tab switch swaps the whole set of bodies and re-seeds it, so no
 // icon spends a frame at 0,0.
 //
+// The loop also holds the detail panel's wall (plan 6.5, #90). It keeps the
+// stage's rectangle and the wall's share of it apart: the world's walls are
+// always `wallRect(stage, progress)`, so a resize that reports a new stage size
+// (`setBounds`) never undoes the wall, and the wall slides on the frame clock
+// with the panel's own ease, with no React render per frame.
+//
 // This file sits beside `physics/`, not in it: `physics/purity.test.ts` keeps
 // the engine free of the clock, and the engine stays #19's. Nothing here sets
 // React state per frame, and a frame allocates nothing but the transform
@@ -23,8 +30,8 @@ import { createPhysicsWorld } from "./physics/world";
 
 /**
  * The frame clock. `now` is on the same clock as the timestamps that `request`
- * hands its callback; the loop itself reads only those timestamps. `now` is
- * for the panel's wall (#90).
+ * hands its callback. The frames read only those timestamps; `setWall` reads
+ * `now` to time the start of a slide (#90).
  */
 export interface FrameClock {
   now(): number;
@@ -54,8 +61,21 @@ export interface StageLoop {
    * `r`, and writes them at once. An id that repeats throws.
    */
   setBodies(ids: readonly string[], r?: number): void;
-  /** Throws on a field that is not finite, before anything changes. */
+  /**
+   * Sets the stage: the world's walls when no panel is open. The open panel's
+   * share is cut off its right side, so a resize never undoes the wall (#88).
+   * Throws on a field that is not finite, before anything changes.
+   */
   setBounds(rect: Rect): void;
+  /**
+   * Slides the panel's wall in (`open`) or out over `PANEL_MS` from `now` (the
+   * frame clock's time, by default `clock.now()`), with `panelProgress`'s ease.
+   * A reversal starts from where the wall is. A call for the side the wall is
+   * on or moving to does nothing, unless `instant`, which puts it there at once.
+   */
+  setWall(open: boolean, now?: number, options?: { instant?: boolean }): void;
+  /** The world's walls now (a copy): the stage less the panel's share. */
+  bounds(): Rect;
   grab(id: BodyId, point: Vec): void;
   moveGrab(id: BodyId, point: Vec): void;
   release(id: BodyId, velocity: Vec): void;
@@ -77,7 +97,14 @@ export function createStageLoop(o: StageLoopOptions): StageLoop {
   const world = createPhysicsWorld({ bounds: o.bounds, seed: o.seed });
   // For the spawn layout only: the world has its own, from the same seed.
   const rng = createRng(o.seed);
-  let bounds = o.bounds;
+  // The stage, and the share of PANEL_WIDTH the wall has cut off its right
+  // side: 0 out, 1 in. `slide` is the slide in progress, or the last one.
+  let stage = o.bounds;
+  let progress = 0;
+  let slide = { from: 0, to: 0, start: 0 };
+  // What the world's walls are now: the stage less the panel's share. Every
+  // change goes through `setWalls`, so this is what the world was last given.
+  let walls: Rect = o.bounds;
   let frame: number | null = null;
   let last: number | null = null;
   let visible = o.visibility.isVisible();
@@ -90,11 +117,27 @@ export function createStageLoop(o: StageLoopOptions): StageLoop {
     }
   }
 
+  function setWalls(rect: Rect) {
+    // The world throws on a field that is not finite, before `walls` changes.
+    world.setBounds(rect);
+    walls = rect;
+  }
+
+  // One step of the slide at frame time `t`. While the window is hidden no
+  // frame runs, so a wall set then lands on the first frame after it shows.
+  function moveWall(t: number) {
+    if (progress === slide.to) return;
+    const e = panelProgress(t - slide.start);
+    progress = e >= 1 ? slide.to : slide.from + (slide.to - slide.from) * e;
+    setWalls(wallRect(stage, progress));
+  }
+
   function tick(t: number) {
     frame = null;
     // A callback that was cancelled may still run (a test's manual clock does
     // it), and so may one that fires as the window hides.
     if (disposed || !visible) return;
+    moveWall(t);
     if (last !== null) world.step((t - last) / 1000);
     last = t;
     writeAll();
@@ -128,16 +171,29 @@ export function createStageLoop(o: StageLoopOptions): StageLoop {
       // `bodies()` is the live array and `remove` splices it, so copy the ids.
       const old = world.bodies().map((b) => b.id);
       for (const id of old) world.remove(id);
-      const points = spawnPositions(ids.length, bounds, r, rng);
+      const points = spawnPositions(ids.length, walls, r, rng);
       for (let i = 0; i < ids.length; i++) {
         world.add({ id: ids[i], x: points[i].x, y: points[i].y, r });
       }
       writeAll();
     },
     setBounds(rect) {
-      world.setBounds(rect);
-      bounds = rect;
+      // The world throws on a field that is not finite before `stage` changes.
+      setWalls(wallRect(rect, progress));
+      stage = rect;
     },
+    setWall(open, now = o.clock.now(), options = {}) {
+      const to = open ? 1 : 0;
+      if (options.instant) {
+        slide = { from: to, to, start: now };
+        progress = to;
+        setWalls(wallRect(stage, progress));
+        return;
+      }
+      if (slide.to === to) return;
+      slide = { from: progress, to, start: now };
+    },
+    bounds: () => ({ ...walls }),
     grab: (id, point) => world.grab(id, point),
     moveGrab: (id, point) => world.moveGrab(id, point),
     release: (id, velocity) => world.release(id, velocity),

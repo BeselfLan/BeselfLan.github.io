@@ -24,7 +24,7 @@ const classNames = [
 ];
 
 describe("skills.css", () => {
-  it("has the classes the stage uses, and the one keyframe", () => {
+  it("has the classes the stage and the panel use, and the two keyframes", () => {
     // A guard against the parsing finding nothing and passing for it.
     expect(classNames).toEqual(
       expect.arrayContaining([
@@ -34,9 +34,16 @@ describe("skills.css", () => {
         "skills-icon",
         "skills-face",
         "skills-label",
+        "skills-panel",
+        "skills-panel-enter",
+        "skills-list-grid",
+        "skills-card",
       ]),
     );
-    expect(keyframeNames).toEqual(["skills-fade-in"]);
+    expect([...keyframeNames].sort()).toEqual([
+      "skills-fade-in",
+      "skills-panel-in",
+    ]);
   });
 
   it("starts every class selector with skills-", () => {
@@ -63,7 +70,12 @@ describe("skills.css", () => {
 
   it("styles every skills- class the components name", () => {
     const used = new Set<string>();
-    for (const file of ["SkillsStage.tsx", "SkillsApp.tsx"]) {
+    for (const file of [
+      "SkillsStage.tsx",
+      "SkillsApp.tsx",
+      "SkillPanel.tsx",
+      "SkillList.tsx",
+    ]) {
       for (const m of read(file).matchAll(/["' ](skills-[\w-]+)/g)) {
         used.add(m[1]);
       }
@@ -73,8 +85,8 @@ describe("skills.css", () => {
   });
 
   it("sets only --skills- properties inline, and the stylesheet reads them", () => {
-    const inline = [...read("SkillsStage.tsx").matchAll(/"(--[\w-]+)"/g)].map(
-      (m) => m[1],
+    const inline = ["SkillsStage.tsx", "SkillPanel.tsx"].flatMap((file) =>
+      [...read(file).matchAll(/"(--[\w-]+)"/g)].map((m) => m[1]),
     );
     expect(inline.length).toBeGreaterThan(0);
     for (const name of inline) {
