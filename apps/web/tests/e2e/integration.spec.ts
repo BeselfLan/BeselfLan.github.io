@@ -549,4 +549,164 @@ test.describe("the page", () => {
       await expect(page.locator('a[href^="tel:"]')).toHaveCount(0);
     });
   });
+
+  test("the journey: boot, every app from the dock, Play, chips both ways, minimise, power cycle", async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    // Expected text comes from the content package. "Welcome to BeselfOS" and
+    // "Copied email" are the UI's own words.
+    const engine = content.entries.find((e) => e.id === "3d-engine")!;
+    const deadknight = content.entries.find((e) => e.id === "deadknight")!;
+    const java = content.skills.find((s) => s.id === "java")!;
+    const featured = featuredEntries();
+    const turns = featured.findIndex((e) => e.id === "3d-engine");
+    expect(
+      turns,
+      "3d-engine is featured, behind the first item",
+    ).toBeGreaterThan(0);
+
+    const win = (id: string) => page.locator(`[data-window-id="${id}"]`);
+    const dockIcon = (id: string) => page.locator(`[data-dock-app="${id}"]`);
+    const toast = (text: string) =>
+      page.locator("[data-toast]").filter({ hasText: text });
+    const desktop = page.locator("[data-desktop]");
+    const stages = page.locator("[data-boot-stage]");
+
+    // 1. A fresh session boots in full and ends on the desktop.
+    await page.goto(`${origin}/`);
+    await expect(page.locator('[data-boot-stage="boot-log"]')).toBeAttached({
+      timeout: 10_000,
+    });
+    await expect(desktop).toBeVisible({ timeout: 15_000 });
+    await expect(stages).toHaveCount(0, { timeout: 5_000 });
+
+    // 2. The welcome comes at once, and the noscript block is not in the DOM.
+    await expect(toast("Welcome to BeselfOS")).toBeVisible();
+    await expect(page.locator("[data-noscript-fallback]")).toHaveCount(0);
+
+    // 3. Every app opens from the dock, focused, running, and loaded.
+    for (const [id, ready] of [
+      ["projects", "[data-entry-id]"],
+      ["skills", "[data-skill-id]"],
+      ["about", "[data-about]"],
+    ] as const) {
+      await dockIcon(id).click();
+      await expect(win(id)).toBeVisible({ timeout: 15_000 });
+      await expect(win(id)).toHaveAttribute("data-focused", "");
+      await expect(dockIcon(id)).toHaveAttribute("data-running", "");
+      await expect(win(id).locator(ready).first()).toBeVisible({
+        timeout: 15_000,
+      });
+    }
+
+    // 4. About copies the email, and the toast is outside its window.
+    await win("about")
+      .getByRole("button", { name: "Copy email", exact: true })
+      .click();
+    await expect(toast("Copied email")).toBeVisible();
+    await expect(toast("Copied email")).toContainText(profile.email);
+
+    // 5. Projects: turn the ring to the engine, open its panel, and Play.
+    const projects = win("projects");
+    await dockIcon("projects").click();
+    await expect(projects).toHaveAttribute("data-focused", "");
+    const next = projects.getByRole("button", {
+      name: "Next item",
+      exact: true,
+    });
+    const count = projects.locator("[data-carousel-index]");
+    for (let pressed = 1; pressed <= turns; pressed++) {
+      await next.click();
+      await expect(count).toHaveText(
+        new RegExp(`^${pressed + 1} / ${featured.length}\\b`),
+      );
+    }
+    // A click on a back item could be blocked by the items in front of it.
+    await expect(projects.locator("[data-front]")).toHaveAttribute(
+      "data-entry-id",
+      "3d-engine",
+    );
+    await projects.locator("[data-front]").click();
+    const panel = projects.locator("[data-detail-panel]");
+    await expect(
+      panel.getByRole("heading", { level: 3, name: engine.title }),
+    ).toBeVisible();
+    const play = panel.getByRole("button", { name: "Play demo", exact: true });
+    await expect(play).toHaveAttribute("data-media", "ready", {
+      timeout: 15_000,
+    });
+    await play.click();
+
+    // 6. The demo window plays the export's own WebM, and closes.
+    const demo = win("video-player:3d-engine");
+    await expect(demo).toBeVisible({ timeout: 15_000 });
+    await expect(demo.locator("[data-titlebar] h2")).toHaveText(
+      `${engine.title} -- Demo`,
+    );
+    await expect(demo.locator('[data-video-state="ready"]')).toBeVisible({
+      timeout: 15_000,
+    });
+    const video = demo.locator("video");
+    await expect
+      .poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState), {
+        timeout: 15_000,
+      })
+      .toBeGreaterThanOrEqual(1);
+    expect(await video.evaluate((v: HTMLVideoElement) => v.currentSrc)).toMatch(
+      /\/media\/3d-engine\.webm$/,
+    );
+    await demo.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(demo).toHaveCount(0);
+
+    // 7. A tech chip in the panel opens Skills at that skill.
+    await panel.getByRole("button", { name: java.name, exact: true }).click();
+    const skills = win("skills");
+    await expect(skills).toHaveAttribute("data-focused", "");
+    const skillPanel = skills.locator("[data-skill-panel]");
+    await expect(
+      skillPanel.getByRole("heading", { level: 3, name: java.name }),
+    ).toBeVisible();
+
+    // 8. "Used in" brings Projects back with that item's panel. The chip names
+    // an entry other than the open one, so a chip that dropped its item would
+    // leave the engine's heading in place.
+    await skillPanel
+      .getByRole("button", { name: deadknight.title, exact: true })
+      .click();
+    await expect(projects).toHaveAttribute("data-focused", "");
+    await expect(
+      projects
+        .locator("[data-detail-panel]")
+        .getByRole("heading", { level: 3, name: deadknight.title }),
+    ).toBeVisible();
+
+    // 9. Minimise hides the window and keeps it running; the dock restores it.
+    await projects
+      .getByRole("button", { name: "Minimise", exact: true })
+      .click();
+    await expect(projects).toBeHidden();
+    await expect(dockIcon("projects")).toHaveAttribute("data-running", "");
+    await dockIcon("projects").click();
+    await expect(projects).toBeVisible();
+    await expect(projects).toHaveAttribute("data-focused", "");
+
+    // 10. Power Off, then Power on: a full boot back to the desktop.
+    await page.getByRole("button", { name: "System menu" }).click();
+    await page
+      .getByRole("dialog", { name: "System menu" })
+      .getByRole("menuitem", { name: "Power Off" })
+      .click();
+    await expect(desktop).toHaveCount(0, { timeout: 5_000 });
+    await expect(page.locator('[data-boot-stage="off"]')).toBeAttached();
+    const power = page.getByRole("button", { name: "Power on" });
+    await expect(power).toBeFocused({ timeout: 5_000 });
+    await power.click();
+    await expect(page.locator('[data-boot-stage="boot-log"]')).toBeAttached({
+      timeout: 10_000,
+    });
+    await expect(desktop).toBeVisible({ timeout: 15_000 });
+    await expect(stages).toHaveCount(0, { timeout: 5_000 });
+    await expect(dockIcon("projects")).toBeVisible();
+  });
 });
