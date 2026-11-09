@@ -1,13 +1,23 @@
 import { lazy } from "react";
 import { defineApp } from "@/os/apps/types";
 
-// A placeholder definition (plan 5.5). The video player issue (#18) replaces
-// this file and VideoPlayerApp.tsx. It keeps the default export made with
-// defineApp and the id, because os/apps/registry.ts depends on both.
+// The Video Player definition (plan 5.5). It keeps the default export made
+// with defineApp and the id "video-player", because os/apps/registry.ts
+// depends on both. registry.ts imports this file into the page's first chunk,
+// so it imports only react and the app contract: the component stays lazy, and
+// the content package stays out. That is why the entry's title travels in the
+// args: the window store re-applies title(args) on every re-open, so a title
+// set later through api.setTitle would be overwritten.
 
 /** The projects entry whose demo plays. */
 export interface VideoPlayerArgs {
+  /** The entry's id. The video's own id comes through the entry's `media`. */
   projectId: string;
+  /**
+   * The entry's title, sent by Projects' Play; the window title falls back to
+   * `projectId`.
+   */
+  title?: string;
 }
 
 export default defineApp<VideoPlayerArgs>({
@@ -24,6 +34,6 @@ export default defineApp<VideoPlayerArgs>({
   dock: null,
   showInAppGrid: false,
   component: lazy(() => import("./VideoPlayerApp")),
-  // #18 swaps in the entry's title.
-  title: (a) => `${a.projectId} -- Demo`,
+  // `||`, not `??`: an empty title falls back to the id too.
+  title: (a) => `${a.title || a.projectId} -- Demo`,
 });
