@@ -23,9 +23,27 @@ import { orderedWindows, os, useOS } from "../store";
 //  - `moved`, the control this file last focused.
 //  - `memory`, per window frame, the control that last had focus inside it,
 //    which Alt+Tab returns to (focusInto).
+//  - `walking`, the media element whose native controls the browser is walking.
+//
+// Native media controls are the exception to "this file does the moving". A
+// <video controls> keeps its play button, scrubber, full screen and menu in a
+// closed shadow root. The page sees only the <video> as the active element,
+// however deep in the controls the focus is, and it sees no focusin while focus
+// moves among them. It sees no keydown or keyup there either: only the Tab that
+// starts on the <video> itself. So that Tab is left to the browser, which walks
+// the controls, and `walking` is kept until something shows that focus is out.
+// What leaves them is one focusin, on the next element in document order and
+// with the <video> as its relatedTarget; the walk resumes from there, from the
+// <video>, to the next control in the desktop's order. A pointer press or any
+// key the document sees ends `walking`: focus is then not in the controls, or
+// a mouse click, not Tab, is what moves it.
 let order: string[] | null = null;
 let moved: Element | null = null;
 let memory = new WeakMap<Element, HTMLElement>();
+let walking: { media: Element; dir: 1 | -1 } | null = null;
+
+// Whole literal selector: the media elements whose controls the browser draws.
+const NATIVE_MEDIA = "video[controls], audio[controls]";
 
 // Whole literal selector. What can take focus; isControl() then drops what
 // cannot. `[tabindex]` includes the roving items of the Projects ring.
@@ -179,6 +197,8 @@ function step(root: HTMLElement, active: Element | null, dir: 1 | -1): boolean {
 export function useFocusOrder(rootRef: RefObject<HTMLElement | null>): void {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      // A key the document sees means focus is not inside native controls.
+      walking = null;
       if (e.key !== "Tab" || e.ctrlKey || e.altKey || e.metaKey) return;
       if (e.defaultPrevented || e.isComposing) return;
       const root = rootRef.current;
@@ -199,23 +219,47 @@ export function useFocusOrder(rootRef: RefObject<HTMLElement | null>): void {
         active === document.documentElement
           ? null
           : active;
-      if (step(root, from, e.shiftKey ? -1 : 1)) e.preventDefault();
+      const dir = e.shiftKey ? -1 : 1;
+      if (from?.matches(NATIVE_MEDIA)) {
+        // The browser walks the native controls: see the top of the file.
+        walking = { media: from, dir };
+        return;
+      }
+      if (step(root, from, dir)) e.preventDefault();
     };
 
-    // Remembers the control that last had focus in each window.
+    // Ends a walk through native media controls, and remembers the control that
+    // last had focus in each window.
     const onFocusIn = (e: FocusEvent) => {
       const target = e.target;
       if (!(target instanceof HTMLElement)) return;
+      const pending = walking;
+      if (pending && e.relatedTarget === pending.media) {
+        // Focus left the controls for the next element in document order. Take
+        // it on to the next one in the desktop's order; the control that step()
+        // focuses is remembered by the focusin it fires.
+        walking = null;
+        const desktop = rootRef.current;
+        if (desktop && step(desktop, pending.media, pending.dir)) return;
+      }
       const frame = target.closest("[data-window-id]");
       const root = rootRef.current;
       if (frame && root?.contains(frame)) memory.set(frame, target);
     };
 
+    // A click on something else moves focus without Tab.
+    const onPointerDown = () => {
+      walking = null;
+    };
+
     document.addEventListener("keydown", onKeyDown);
     document.addEventListener("focusin", onFocusIn);
+    document.addEventListener("pointerdown", onPointerDown, true);
     return () => {
       document.removeEventListener("keydown", onKeyDown);
       document.removeEventListener("focusin", onFocusIn);
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      walking = null;
       order = null;
       moved = null;
       memory = new WeakMap();

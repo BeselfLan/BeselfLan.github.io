@@ -28,6 +28,16 @@ function content(id: string): ReactNode {
     );
   }
   if (id === "m") return <button>m-1</button>;
+  if (id === "v") {
+    // A video with native controls, last in its window. jsdom focuses only an
+    // element with a tabindex, so it has one, as the browser's own is focusable.
+    return (
+      <div>
+        <button>v-1</button>
+        <video controls tabIndex={0} />
+      </div>
+    );
+  }
   if (id === "x") {
     // What Tab must pass over: a disabled button, a negative tabindex, a box
     // that is not drawn, and a hidden input, before the one real control.
@@ -130,7 +140,14 @@ const isActivities = (el: Element | null) => nameOf(el) === "Activities";
 beforeEach(() => {
   setupBrowser();
   sessionStorage.clear();
-  register({ id: "a" }, { id: "b" }, { id: "m" }, { id: "x" }, { id: "r" });
+  register(
+    { id: "a" },
+    { id: "b" },
+    { id: "m" },
+    { id: "x" },
+    { id: "r" },
+    { id: "v" },
+  );
 });
 afterEach(() => {
   blurAll();
@@ -334,6 +351,132 @@ describe("useFocusOrder", () => {
     outside.remove();
   });
 
+  describe("native media controls", () => {
+    // The browser walks a <video controls>' own controls, which sit in a closed
+    // shadow root: the page sees the <video> as the active element throughout,
+    // sees no key there after the first Tab, and sees one focusin when focus
+    // leaves, with the <video> as its relatedTarget. Open a (behind) and v (in
+    // front); the browser then lands on Activities, which comes after the
+    // windows in the DOM, and the desktop's order is what must win.
+    const video = () => document.querySelector("video")!;
+
+    function onVideo() {
+      mount();
+      open("a", "v");
+      expect(focusedWindow(useOS.getState())?.id).toBe("v");
+      act(() => video().focus());
+      expect(document.activeElement).toBe(video());
+    }
+    // What the browser does when the Tab leaves the controls: a focusin on the
+    // element it lands on, from the video. jsdom gives the same relatedTarget.
+    const leaveTo = (name: string) => focusButton(name);
+    const pointerDown = () =>
+      act(() => {
+        document.body.dispatchEvent(
+          new Event("pointerdown", { bubbles: true }),
+        );
+      });
+
+    it("leaves Tab on the video to the browser", () => {
+      onVideo();
+      const event = tab();
+      expect(event.defaultPrevented).toBe(false);
+      expect(document.activeElement).toBe(video());
+      // Nor does Shift+Tab move it.
+      const back = shiftTab();
+      expect(back.defaultPrevented).toBe(false);
+      expect(document.activeElement).toBe(video());
+    });
+
+    it("goes on to the next control in the desktop's order when focus leaves", () => {
+      onVideo();
+      tab();
+      // The video is last in the front window, so the next control of the walk
+      // is the first one of A, which is behind. The browser's own landing,
+      // Activities, is not it.
+      leaveTo("Activities");
+      expect(groupOf(document.activeElement)).toBe("a");
+      expect(nameOf(document.activeElement)).toBe("Minimise");
+      expect(focusedWindow(useOS.getState())?.id).toBe("a");
+    });
+
+    it("waits for as long as the controls keep the focus", async () => {
+      onVideo();
+      tab();
+      // Nothing the document sees happens while focus moves among the controls,
+      // however long that takes: a timer that ends the wait would be too soon.
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+      leaveTo("Activities");
+      expect(nameOf(document.activeElement)).toBe("Minimise");
+    });
+
+    it("goes back to the previous control with Shift+Tab", () => {
+      onVideo();
+      shiftTab();
+      leaveTo("Activities");
+      expect(nameOf(document.activeElement)).toBe("v-1");
+    });
+
+    it("ignores a focus that does not come from the video", () => {
+      onVideo();
+      tab();
+      // A focusin from nowhere, or from another element, is not the way out.
+      const activities = screen.getByRole("button", {
+        name: "Activities",
+        hidden: true,
+      });
+      act(() => {
+        activities.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+      });
+      expect(document.activeElement).toBe(video());
+      act(() => {
+        activities.dispatchEvent(
+          new FocusEvent("focusin", {
+            bubbles: true,
+            relatedTarget: screen.getByRole("button", {
+              name: "v-1",
+              hidden: true,
+            }),
+          }),
+        );
+      });
+      expect(document.activeElement).toBe(video());
+    });
+
+    it("stops waiting at a click, which moves focus without Tab", () => {
+      onVideo();
+      tab();
+      pointerDown();
+      leaveTo("Activities");
+      expect(nameOf(document.activeElement)).toBe("Activities");
+      expect(focusedWindow(useOS.getState())?.id).toBe("v");
+    });
+
+    it("stops waiting at any key the document sees", () => {
+      onVideo();
+      tab();
+      // Space on the video itself: focus is not in the controls any more.
+      press({ key: " " }, video());
+      leaveTo("Activities");
+      expect(nameOf(document.activeElement)).toBe("Activities");
+    });
+
+    it("walks on from a video that took focus from the walk itself", () => {
+      mount();
+      open("a", "v");
+      // Tab from v-1 lands on the video, as the walk does for any control, and
+      // the next Tab is the browser's.
+      focusButton("v-1");
+      expect(tab().defaultPrevented).toBe(true);
+      expect(document.activeElement).toBe(video());
+      expect(tab().defaultPrevented).toBe(false);
+      leaveTo("Activities");
+      expect(groupOf(document.activeElement)).toBe("a");
+    });
+  });
+
   it("stops on unmount", () => {
     // Every key and focus listener the desktop puts on the document comes off
     // again. The handler also checks its root, so a leaked listener would do
@@ -342,9 +485,12 @@ describe("useFocusOrder", () => {
     const removed = vi.spyOn(document, "removeEventListener");
     const { unmount } = mount();
     const mine = added.mock.calls
-      .filter(([type]) => type === "keydown" || type === "focusin")
+      .filter(
+        ([type]) =>
+          type === "keydown" || type === "focusin" || type === "pointerdown",
+      )
       .map(([, listener]) => listener);
-    expect(mine.length).toBeGreaterThanOrEqual(2);
+    expect(mine.length).toBeGreaterThanOrEqual(3);
     unmount();
     for (const listener of mine) {
       expect(removed.mock.calls.some(([, l]) => l === listener)).toBe(true);
