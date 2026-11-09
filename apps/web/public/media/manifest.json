@@ -1,0 +1,53 @@
+[
+  {
+    "id": "3d-engine",
+    "sources": [
+      {
+        "src": "3d-engine.webm",
+        "type": "video/webm; codecs=vp9"
+      },
+      {
+        "src": "3d-engine.mp4",
+        "type": "video/mp4"
+      }
+    ],
+    "poster": "3d-engine.jpg",
+    "width": 344,
+    "height": 344,
+    "durationMs": 22800
+  },
+  {
+    "id": "deadknight",
+    "sources": [
+      {
+        "src": "deadknight.webm",
+        "type": "video/webm; codecs=vp9"
+      },
+      {
+        "src": "deadknight.mp4",
+        "type": "video/mp4"
+      }
+    ],
+    "poster": "deadknight.jpg",
+    "width": 800,
+    "height": 450,
+    "durationMs": 60000
+  },
+  {
+    "id": "fnaf",
+    "sources": [
+      {
+        "src": "fnaf.webm",
+        "type": "video/webm; codecs=vp9"
+      },
+      {
+        "src": "fnaf.mp4",
+        "type": "video/mp4"
+      }
+    ],
+    "poster": "fnaf.jpg",
+    "width": 672,
+    "height": 344,
+    "durationMs": 50000
+  }
+]
