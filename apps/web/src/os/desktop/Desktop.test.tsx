@@ -37,6 +37,9 @@ const before = (a: Element, b: Element): boolean =>
 describe("Desktop", () => {
   beforeEach(() => {
     setupBrowser();
+    // setupBrowser clears localStorage only, and the welcome's flag is in
+    // sessionStorage.
+    sessionStorage.clear();
   });
   afterEach(teardownBrowser);
 
@@ -124,6 +127,63 @@ describe("Desktop", () => {
       const button = screen.getByRole("button", { name });
       expect(button.getAttribute("aria-controls"), name).toBe(grid.id);
     }
+  });
+
+  it("puts the toasts between the dock and the grid", () => {
+    mount();
+    expect(document.querySelectorAll("[data-toasts]")).toHaveLength(1);
+    const toasts = q("[data-toasts]")!;
+    // After the dock, so a toast paints over it, and before the grid, which is
+    // modal and paints over the toasts. In the root with the rest.
+    expect(before(q("[data-dock]")!, toasts)).toBe(true);
+    expect(before(toasts, q("#desktop-app-grid")!)).toBe(true);
+    expect(before(q('[data-testid="layer"]')!, toasts)).toBe(true);
+    expect(toasts.parentElement).toBe(
+      q('[data-testid="layer"]')!.parentElement,
+    );
+  });
+
+  it("shows a pushed notification as a toast", () => {
+    mount();
+    act(() => void os.notifications.push({ title: "Hi", body: "there" }));
+    expect(q("[data-toast]")?.textContent).toContain("Hi");
+    expect(q("[data-toast]")?.textContent).toContain("there");
+  });
+
+  it("greets once the boot reaches the desktop", () => {
+    // The skip path: the boot is already at the desktop when it mounts.
+    useOS.setState((s) => {
+      s.boot.stage = "desktop";
+    });
+    mount();
+    const toasts = [...document.querySelectorAll("[data-toast]")];
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].textContent).toContain("Welcome to BeselfOS");
+    expect(toasts[0].textContent).toContain(
+      "Open Projects, Skills or About from the dock on the left.",
+    );
+    expect(sessionStorage.getItem("beselfos:welcomed")).toBe("1");
+  });
+
+  it("does not greet before the boot reaches the desktop", () => {
+    mount();
+    expect(document.querySelectorAll("[data-toast]")).toHaveLength(0);
+    expect(useOS.getState().notifications.items).toHaveLength(0);
+
+    // The desktop mounts during desktop-enter, and greets when the stage
+    // changes to the desktop.
+    act(() =>
+      useOS.setState((s) => {
+        s.boot.stage = "desktop-enter";
+      }),
+    );
+    expect(document.querySelectorAll("[data-toast]")).toHaveLength(0);
+    act(() =>
+      useOS.setState((s) => {
+        s.boot.stage = "desktop";
+      }),
+    );
+    expect(document.querySelectorAll("[data-toast]")).toHaveLength(1);
   });
 
   it("opens the grid from Activities and Show Applications", () => {

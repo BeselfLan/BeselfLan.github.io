@@ -1,8 +1,9 @@
 import { content } from "@beself/content";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
-// The desktop: top bar, wallpaper, clock, popovers, the dock, the App Grid and
-// the desktop's right-click menu. Every test starts from openDesktop, which
+// The desktop: top bar, wallpaper, clock, popovers, the dock, the App Grid, the
+// desktop's right-click menu, the toasts and the welcome. Every test starts
+// from openDesktop, which
 // returns only once the boot is over. The dock's tests open apps by clicking
 // their icons.
 //
@@ -40,9 +41,22 @@ const dockIcon = (page: Page, id: string) =>
  * the boot to finish. The desktop is mounted during desktop-enter while the
  * boot overlay fades for 400 ms, and the stage table accepts Restart and Power
  * Off only from desktop, the one stage where BootSequence renders nothing.
+ *
+ * The welcome toast (#101) shows for 4 s at the top centre of the first empty
+ * desktop of a session, and would cover what a test clicks there. So unless
+ * `allowWelcome` is set, the session starts out welcomed, through an init
+ * script that runs before the page's own scripts (and again on a reload).
  */
-async function openDesktop(page: Page) {
-  await page.goto("/");
+async function openDesktop(
+  page: Page,
+  { path = "/", allowWelcome = false } = {},
+) {
+  if (!allowWelcome) {
+    await page.addInitScript(() =>
+      sessionStorage.setItem("beselfos:welcomed", "1"),
+    );
+  }
+  await page.goto(path);
   await expect(page.locator("[data-desktop]")).toBeVisible({ timeout: 15_000 });
   await expect(page.locator("[data-boot-stage]")).toHaveCount(0, {
     timeout: 5_000,
@@ -548,5 +562,163 @@ test("the focused app's name stays clear of the clock at 390 px", async ({
     const c = await rect(page.locator("[data-clock]"));
     const apart = n.x + n.width <= c.x || c.x + c.width <= n.x;
     expect(apart).toBe(true);
+  }).toPass();
+});
+
+// The toasts and the welcome (#101). A toast shows for 4 s, so a test that
+// reads its text asserts it at once, and the calendar's list (the store, which
+// outlives the toast) is where a notification is checked afterwards.
+
+const toasts = (page: Page) => page.locator("[data-toast]");
+const calendar = (page: Page) =>
+  page.getByRole("dialog", { name: "Calendar and notifications" });
+const notifyButton = (page: Page) =>
+  page
+    .locator('[data-window-id="hello"]')
+    .getByRole("button", { name: "api.notify()", exact: true });
+const listRows = (page: Page) =>
+  page.getByRole("list", { name: "Notifications" }).getByRole("listitem");
+
+test("a toast appears, leaves after about 4 s, and lands in the calendar list", async ({
+  page,
+}) => {
+  // A deep link: the visitor already has an app in front of them, so the
+  // desktop must not welcome them. allowWelcome checks that.
+  await openDesktop(page, { path: "/?app=hello", allowWelcome: true });
+  await expect(notifyButton(page)).toBeVisible({ timeout: 15_000 });
+
+  // One evaluate: a MutationObserver on the region notes when the toast is
+  // first there and when none is, in ms since the click. A slow frame skews
+  // nothing, and a Playwright round trip does not enter the times.
+  const t = await page.evaluate(
+    () =>
+      new Promise<{ shown: number; gone: number }>((resolve, reject) => {
+        const region = document.querySelector("[data-toasts]");
+        const button = [...document.querySelectorAll("button")].find(
+          (b) => b.textContent === "api.notify()",
+        );
+        if (!region || !button) {
+          reject(new Error("the toast region or the button is missing"));
+          return;
+        }
+        const has = () =>
+          [...document.querySelectorAll("[data-toast]")].some((el) =>
+            el.textContent?.includes("Hello from Hello"),
+          );
+        const t0 = performance.now();
+        let shown = -1;
+        const observer = new MutationObserver(() => {
+          const now = performance.now() - t0;
+          if (shown < 0) {
+            if (has()) shown = now;
+          } else if (!has()) {
+            observer.disconnect();
+            clearTimeout(guard);
+            resolve({ shown, gone: now });
+          }
+        });
+        observer.observe(region, {
+          childList: true,
+          subtree: true,
+          characterData: true,
+        });
+        const guard = setTimeout(() => {
+          observer.disconnect();
+          reject(new Error(`the toast came at ${shown} ms and never left`));
+        }, 15_000);
+        button.click();
+      }),
+  );
+  expect(t.shown).toBeGreaterThanOrEqual(0);
+  expect(t.shown).toBeLessThan(1000);
+  // The click pushes at once and a timer never fires early, so the lower bound
+  // holds on any host. The upper one leaves 2 s for a loaded host.
+  expect(t.gone).toBeGreaterThanOrEqual(3990);
+  expect(t.gone).toBeLessThan(6000);
+
+  // It stayed in the list, and there was no welcome.
+  await page.locator("[data-clock]").click();
+  await expect(calendar(page)).toBeVisible();
+  await expect(listRows(page)).toHaveCount(1);
+  await expect(listRows(page).first()).toContainText("Hello from Hello");
+  await expect(calendar(page)).not.toContainText("Welcome to BeselfOS");
+});
+
+test("toasts stack to at most three", async ({ page }) => {
+  await openDesktop(page, { path: "/?app=hello" });
+  await expect(notifyButton(page)).toBeVisible({ timeout: 15_000 });
+
+  await page.evaluate(() => {
+    const button = [...document.querySelectorAll("button")].find(
+      (b) => b.textContent === "api.notify()",
+    );
+    if (!button) throw new Error("the button is missing");
+    for (let i = 0; i < 4; i++) button.click();
+  });
+  await expect(toasts(page)).toHaveCount(3);
+
+  // All four are in the list: the fourth only pushed the first toast out.
+  await page.locator("[data-clock]").click();
+  await expect(calendar(page)).toBeVisible();
+  await expect(listRows(page)).toHaveCount(4);
+  await expect(
+    listRows(page).filter({ hasText: "Hello from Hello" }),
+  ).toHaveCount(4);
+});
+
+test("the welcome greets the first empty desktop, once per session", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await openDesktop(page, { allowWelcome: true });
+
+  // It lives 4 s, so it is asserted at once.
+  const welcome = toasts(page).filter({ hasText: "Welcome to BeselfOS" });
+  await expect(welcome).toContainText(
+    "Open Projects, Skills or About from the dock on the left.",
+  );
+  // And it is in the list, with the same words.
+  await page.locator("[data-clock]").click();
+  await expect(calendar(page)).toBeVisible();
+  await expect(calendar(page)).toContainText("Welcome to BeselfOS");
+  await expect(calendar(page)).toContainText(
+    "Open Projects, Skills or About from the dock on the left.",
+  );
+  await page.keyboard.press("Escape");
+  await expect(calendar(page)).toHaveCount(0);
+
+  // A reload is a fast boot in the same session. The store starts empty, so a
+  // second welcome would show in the list.
+  await page.reload();
+  await expect(page.locator("[data-desktop]")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator("[data-boot-stage]")).toHaveCount(0, {
+    timeout: 5_000,
+  });
+  await page.locator("[data-clock]").click();
+  await expect(calendar(page)).toBeVisible();
+  await expect(calendar(page)).not.toContainText("Welcome to BeselfOS");
+  await expect(toasts(page)).toHaveCount(0);
+});
+
+test("on a phone the welcome points at the bottom dock", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openDesktop(page, { allowWelcome: true });
+
+  const welcome = toasts(page).filter({ hasText: "Welcome to BeselfOS" });
+  await expect(welcome).toContainText(
+    "Open Projects, Skills or About from the dock at the bottom.",
+  );
+  await expect(dock(page)).toHaveAttribute("data-dock-side", "bottom");
+
+  // It fits the 390 wide screen, with the region's 16 unit padding on each
+  // side (the scale is 1 in fullscreen mode). It slides in over 150 ms, so
+  // check the settled box.
+  await expect(async () => {
+    const box = await rect(page.locator("[data-screen-box]"));
+    const w = await rect(welcome);
+    expect(w.x).toBeGreaterThanOrEqual(box.x - 1);
+    expect(w.x + w.width).toBeLessThanOrEqual(box.x + box.width + 1);
+    expect(Math.abs(w.x - box.x - 16)).toBeLessThanOrEqual(1);
+    expect(Math.abs(w.width - (box.width - 32))).toBeLessThanOrEqual(1);
   }).toPass();
 });
