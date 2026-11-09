@@ -696,3 +696,133 @@ test("one window per demo, and two demos side by side", async ({ page }) => {
     2,
   );
 });
+
+// The committed demos (#119). These tests route nothing: the server answers
+// for the files in public/media, and the player plays them. Playwright's
+// Chromium has no H.264, so it plays the WebM, which the manifest lists first.
+// One video at a time, and each test closes its window: the host is short on
+// memory.
+
+const DEMOS = [
+  { entry: "deadknight", media: "deadknight" },
+  { entry: "3d-engine", media: "3d-engine" },
+  // The entry's id is not the video's id.
+  { entry: "fnaf-project", media: "fnaf" },
+];
+
+for (const { entry: entryId, media } of DEMOS) {
+  test(`the ${entryId} demo plays and seeks from public/media`, async ({
+    page,
+  }) => {
+    // The manifest as the server serves it, and a Range request for the WebM:
+    // the video element seeks with them, and a server that ignored Range would
+    // answer 200 with the whole file.
+    const served = await page.request.get("/media/manifest.json");
+    expect(served.status()).toBe(200);
+    const manifest: {
+      id: string;
+      width: number;
+      height: number;
+      durationMs: number;
+    }[] = await served.json();
+    const demo = manifest.find((m) => m.id === media);
+    expect(demo, `${media} is in the manifest`).toBeDefined();
+    const { width, height, durationMs } = demo!;
+    const range = await page.request.get(`/media/${media}.webm`, {
+      headers: { Range: "bytes=0-1023" },
+    });
+    expect(range.status()).toBe(206);
+    expect((await range.body()).length).toBe(1024);
+
+    await openProjects(page, `&item=${entryId}`);
+    await expect(play(page)).toHaveAttribute("data-media", "ready", {
+      timeout: 15_000,
+    });
+    await play(page).click();
+
+    const demoWindow = player(page, entryId);
+    await expect(demoWindow).toBeVisible({ timeout: 15_000 });
+    await expect(demoWindow.locator('[data-video-state="ready"]')).toBeVisible({
+      timeout: 15_000,
+    });
+
+    // Metadata: the file the browser chose, and what it says about it. The
+    // manifest's duration was probed from the MP4, so the WebM may differ by a
+    // few frames.
+    const video = demoWindow.locator("video");
+    await expect
+      .poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState), {
+        timeout: 15_000,
+      })
+      .toBeGreaterThanOrEqual(1);
+    const info = await video.evaluate((v: HTMLVideoElement) => ({
+      src: v.currentSrc,
+      duration: v.duration,
+      width: v.videoWidth,
+      height: v.videoHeight,
+    }));
+    expect(info.src.endsWith(`/media/${media}.webm`)).toBe(true);
+    expect(Math.abs(info.duration - durationMs / 1000)).toBeLessThanOrEqual(
+      0.5,
+    );
+    expect(info.width).toBe(width);
+    expect(info.height).toBe(height);
+
+    // No autoplay: it starts only when asked, and muted so that the browser's
+    // autoplay policy allows it.
+    expect(await video.evaluate((v: HTMLVideoElement) => v.paused)).toBe(true);
+    await video.evaluate(async (v: HTMLVideoElement) => {
+      v.muted = true;
+      await v.play();
+    });
+    await expect
+      .poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime), {
+        timeout: 5_000,
+      })
+      .toBeGreaterThan(0.2);
+
+    // Seeking to the middle fires `seeked`, and the time lands near the target.
+    const target = info.duration / 2;
+    const landed = await video.evaluate(
+      (v: HTMLVideoElement, to: number) =>
+        new Promise<number>((done) => {
+          v.addEventListener("seeked", () => done(v.currentTime), {
+            once: true,
+          });
+          v.currentTime = to;
+        }),
+      target,
+    );
+    expect(Math.abs(landed - target)).toBeLessThanOrEqual(1);
+
+    // D13, the one real check of it (the unit tests use stubs): a window that
+    // is minimised pauses its video, and it does not resume by itself.
+    if (entryId === "deadknight") {
+      await video.evaluate(async (v: HTMLVideoElement) => {
+        v.currentTime = 0;
+        await v.play();
+      });
+      expect(await video.evaluate((v: HTMLVideoElement) => v.paused)).toBe(
+        false,
+      );
+      await demoWindow
+        .getByRole("button", { name: "Minimise", exact: true })
+        .click();
+      await expect(demoWindow).toBeHidden();
+      await expect
+        .poll(() => video.evaluate((v: HTMLVideoElement) => v.paused))
+        .toBe(true);
+
+      await play(page).click();
+      await expect(demoWindow).toBeVisible();
+      expect(await video.evaluate((v: HTMLVideoElement) => v.paused)).toBe(
+        true,
+      );
+    }
+
+    await demoWindow
+      .getByRole("button", { name: "Close", exact: true })
+      .click();
+    await expect(demoWindow).toHaveCount(0);
+  });
+}
