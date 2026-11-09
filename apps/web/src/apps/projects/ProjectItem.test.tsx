@@ -4,8 +4,8 @@ import { staticContent } from "@/content/static";
 import { EntryIcon } from "./EntryIcon";
 import { ProjectItem } from "./ProjectItem";
 
-// The two pieces that #83's ring and #18's panel build on: the props, the data
-// attributes and the sizes are what those issues rely on.
+// The two pieces that the ring and the detail panel build on: the props, the
+// data attributes and the sizes are what they rely on.
 
 function entry(id: string) {
   const found = staticContent.entry(id);
@@ -93,11 +93,32 @@ describe("ProjectItem", () => {
     expect(button.hasAttribute("data-selected")).toBe(false);
     expect(button.hasAttribute("data-front")).toBe(false);
     expect(button.hasAttribute("tabindex")).toBe(false);
-    // Selection has no ARIA until #18's panel; the title is not a heading.
+    // Without a panelId there is no ARIA; the title is not a heading.
     for (const name of ["aria-pressed", "aria-selected", "aria-expanded"]) {
       expect(button.hasAttribute(name), name).toBe(false);
     }
     expect(container.querySelector("h1, h2, h3, h4, h5, h6")).toBeNull();
+  });
+
+  it("with a panelId it says what it controls", () => {
+    const { rerender } = render(
+      <ProjectItem entry={pong} selected panelId="p1" onClick={() => {}} />,
+    );
+    const button = screen.getByRole("button", { name: "Pong" });
+    expect(button.getAttribute("aria-expanded")).toBe("true");
+    expect(button.getAttribute("aria-controls")).toBe("p1");
+
+    // Not selected: closed, and nothing to point at.
+    rerender(
+      <ProjectItem
+        entry={pong}
+        selected={false}
+        panelId="p1"
+        onClick={() => {}}
+      />,
+    );
+    expect(button.getAttribute("aria-expanded")).toBe("false");
+    expect(button.hasAttribute("aria-controls")).toBe(false);
   });
 
   it("holds the icon at 96 and the title", () => {

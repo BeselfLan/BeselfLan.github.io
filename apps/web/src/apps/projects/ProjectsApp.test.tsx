@@ -35,7 +35,26 @@ const frames = (ms: number) => {
   }
 };
 
-function makeApi(content: AppApi["content"] = staticContent) {
+// What the fake media gives for a video: absolute URLs, as the real provider's.
+const FIXTURE = {
+  id: "deadknight",
+  sources: [
+    { src: "https://example.test/media/deadknight.webm", type: "video/webm" },
+  ],
+  poster: "https://example.test/media/deadknight.jpg",
+  width: 640,
+  height: 360,
+  durationMs: 1000,
+};
+
+// A bare vi.fn() would return undefined, which the panel's Play treats as
+// offline, and the offline Play's Tooltip needs a Screen that this file does
+// not render. So by default the media resolves, with a status of "unknown".
+function makeApi(
+  content: AppApi["content"] = staticContent,
+  resolve: () => Promise<typeof FIXTURE | null> = () =>
+    Promise.resolve(FIXTURE),
+) {
   const mocks = {
     close: vi.fn(),
     minimize: vi.fn(),
@@ -51,7 +70,7 @@ function makeApi(content: AppApi["content"] = staticContent) {
   const api = {
     ...mocks,
     content,
-    media: { status: () => "unknown", resolve: vi.fn() },
+    media: { status: () => "unknown", resolve: vi.fn(resolve) },
   } as unknown as AppApi;
   return { api, mocks };
 }
@@ -406,5 +425,197 @@ describe("ProjectsApp", () => {
     press("Hackathons");
     expect(vi.getTimerCount()).toBe(0);
     expect(index(container)).toBe("1 / 2");
+  });
+});
+
+// The detail panel (plan 5.2, 5.4). The panel slides in with motion on real
+// frames, which the fake clock above cannot step, so nothing here looks at its
+// own transform. It closes at once, with no exit animation.
+const panel = (c: HTMLElement) =>
+  c.querySelector<HTMLElement>("[data-detail-panel]");
+const shift = (c: HTMLElement) =>
+  c.querySelector<HTMLElement>("[data-carousel]")?.style.transform;
+const heading = (c: HTMLElement) => panel(c)?.querySelector("h3")?.textContent;
+const frontItem = (c: HTMLElement) =>
+  c.querySelector<HTMLElement>("[data-front]")!;
+const closeButton = () => screen.getByRole("button", { name: "Close details" });
+
+describe("ProjectsApp detail panel", () => {
+  it("opens beside the ring when an item is selected", () => {
+    const { api } = makeApi();
+    const { container } = render(ui(api, {}));
+    expect(panel(container)).toBeNull();
+    expect(shift(container)).toBe("translateX(0px)");
+
+    fireEvent.click(item(container, "tetris-asm"));
+    expect(heading(container)).toBe("Tetris in MIPS Assembly (MARS)");
+    expect(shift(container)).toBe("translateX(190px)");
+    // Beside the stage, never inside it.
+    expect(
+      container.querySelector("[data-carousel] [data-detail-panel]"),
+    ).toBeNull();
+    expect(panel(container)?.parentElement).toBe(
+      container.querySelector("[data-carousel]")?.parentElement?.parentElement,
+    );
+  });
+
+  it("opens for an item link", () => {
+    const { api } = makeApi();
+    const { container } = render(ui(api, { item: "tetris-asm" }));
+    expect(heading(container)).toBe("Tetris in MIPS Assembly (MARS)");
+    expect(shift(container)).toBe("translateX(190px)");
+  });
+
+  it("updates in place for a new selection", () => {
+    const { api } = makeApi();
+    const { container } = render(ui(api, {}));
+    press("All");
+    fireEvent.click(item(container, "pong"));
+    const first = panel(container);
+    expect(heading(container)).toBe("Pong");
+
+    fireEvent.click(item(container, "bash-shell"));
+    expect(panel(container)).toBe(first);
+    expect(heading(container)).toBe("Bash Terminal Recreation in C");
+  });
+
+  it("stays open while a chip keeps the selection, and closes when it clears it", () => {
+    const { api } = makeApi();
+    const { container } = render(ui(api, {}));
+    press("All");
+    fireEvent.click(item(container, "pong"));
+    press("Projects");
+    expect(heading(container)).toBe("Pong");
+    expect(shift(container)).toBe("translateX(190px)");
+
+    press("Hackathons");
+    expect(panel(container)).toBeNull();
+    expect(shift(container)).toBe("translateX(0px)");
+  });
+
+  it("closes from the X and gives focus back to the front item", () => {
+    const { api } = makeApi();
+    const { container } = render(ui(api, { item: "tetris-asm" }));
+    expect(panel(container)).not.toBeNull();
+
+    fireEvent.click(closeButton());
+    // At once: there is no exit animation to wait for.
+    expect(panel(container)).toBeNull();
+    expect(container.querySelectorAll("[data-selected]")).toHaveLength(0);
+    expect(shift(container)).toBe("translateX(0px)");
+    expect(document.activeElement).toBe(frontItem(container));
+    expect(document.activeElement?.getAttribute("data-entry-id")).toBe(
+      "tetris-asm",
+    );
+  });
+
+  it("closes from a plain Escape, and only while it is open", () => {
+    const { api } = makeApi();
+    const { container } = render(ui(api, { item: "tetris-asm" }));
+    const front = frontItem(container);
+
+    // A key with a modifier, or in a composition, is not the visitor's Escape.
+    for (const init of [
+      { ctrlKey: true },
+      { altKey: true },
+      { metaKey: true },
+      { shiftKey: true },
+      { isComposing: true },
+    ]) {
+      const label = JSON.stringify(init);
+      expect(fireEvent.keyDown(front, { key: "Escape", ...init }), label).toBe(
+        true,
+      );
+      expect(panel(container), label).not.toBeNull();
+    }
+
+    // An Escape that something below already took (a popup, say) is theirs.
+    const taken = (e: Event) => e.preventDefault();
+    front.addEventListener("keydown", taken);
+    expect(fireEvent.keyDown(front, { key: "Escape" })).toBe(false);
+    expect(panel(container)).not.toBeNull();
+    front.removeEventListener("keydown", taken);
+
+    // Prevented, so that the OS's Escape (close all) skips it.
+    expect(fireEvent.keyDown(front, { key: "Escape" })).toBe(false);
+    expect(panel(container)).toBeNull();
+    expect(container.querySelectorAll("[data-selected]")).toHaveLength(0);
+    expect(shift(container)).toBe("translateX(0px)");
+    expect(document.activeElement).toBe(frontItem(container));
+
+    // With nothing open, Escape is left alone for the App Grid and the OS.
+    expect(fireEvent.keyDown(frontItem(container), { key: "Escape" })).toBe(
+      true,
+    );
+    expect(fireEvent.keyDown(chip("All"), { key: "Escape" })).toBe(true);
+  });
+
+  it("hears Escape on a control in the panel and on a chip", () => {
+    const { api } = makeApi();
+    const { container } = render(ui(api, { item: "tetris-asm" }));
+    expect(fireEvent.keyDown(closeButton(), { key: "Escape" })).toBe(false);
+    expect(panel(container)).toBeNull();
+
+    fireEvent.click(item(container, "tetris-asm"));
+    expect(panel(container)).not.toBeNull();
+    expect(fireEvent.keyDown(chip("All"), { key: "Escape" })).toBe(false);
+    expect(panel(container)).toBeNull();
+  });
+
+  it("says what the items control", () => {
+    const { api } = makeApi();
+    const { container } = render(ui(api, { item: "tetris-asm" }));
+    const id = panel(container)!.id;
+    expect(id).not.toBe("");
+    for (const el of container.querySelectorAll("[data-entry-id]")) {
+      const open = el.getAttribute("data-entry-id") === "tetris-asm";
+      expect(el.getAttribute("aria-expanded"), el.textContent).toBe(
+        String(open),
+      );
+      expect(el.getAttribute("aria-controls"), el.textContent).toBe(
+        open ? id : null,
+      );
+    }
+
+    // Closed, every item still says so, and none points anywhere.
+    fireEvent.click(closeButton());
+    for (const el of container.querySelectorAll("[data-entry-id]")) {
+      expect(el.getAttribute("aria-expanded")).toBe("false");
+      expect(el.hasAttribute("aria-controls")).toBe(false);
+    }
+  });
+
+  it("never adds a second heading that matches /Projects/", () => {
+    // registry.test.ts looks the app's heading up by /Projects/. A title or a
+    // panel subheading with that word would break it for that entry. The media
+    // never settles here, so no state is set after a test step.
+    const { api } = makeApi(staticContent, () => new Promise(() => {}));
+    for (const entry of staticContent.entries()) {
+      const { container, unmount } = render(ui(api, { item: entry.id }));
+      expect(panel(container), entry.id).not.toBeNull();
+      expect(
+        screen.getAllByRole("heading", { name: /Projects/ }),
+        entry.id,
+      ).toHaveLength(1);
+      unmount();
+    }
+  });
+
+  it("asks the media for a video only when its entry is open", async () => {
+    const { api } = makeApi();
+    const { container } = render(ui(api, {}));
+    fireEvent.click(item(container, "tetris-asm"));
+    expect(api.media.resolve).not.toHaveBeenCalled();
+
+    fireEvent.click(item(container, "deadknight"));
+    // Promises settle in microtasks, which act() runs.
+    await act(async () => {
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+    });
+    expect(api.media.resolve).toHaveBeenCalledTimes(1);
+    expect(api.media.resolve).toHaveBeenCalledWith("deadknight");
+    expect(
+      screen.getByRole("button", { name: "Play demo" }).dataset.media,
+    ).toBe("ready");
   });
 });
