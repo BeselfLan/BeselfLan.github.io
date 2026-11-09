@@ -14,7 +14,21 @@ import { afterEach, describe, expect, it } from "vitest";
 const root = resolve(import.meta.dirname, "../../..");
 const base = join(root, "deploy/docker-compose.yml");
 const local = join(root, "deploy/docker-compose.local.yml");
+const edge = join(root, "deploy/docker-compose.edge.yml");
 const read = (file: string) => readFileSync(join(root, file), "utf8");
+
+// The files under a folder that the repository tracks or would add: a new file
+// counts before it is committed, and a developer's own ignored deploy/.env does
+// not.
+function listed(dir: string): string[] {
+  const run = spawnSync(
+    "git",
+    ["ls-files", "--cached", "--others", "--exclude-standard", "--", dir],
+    { cwd: root, encoding: "utf8" },
+  );
+  expect(run.status, run.stderr).toBe(0);
+  return run.stdout.split("\n").filter((f) => f !== "");
+}
 
 // `docker compose config` only reads files, so it needs no daemon.
 const composeAvailable =
@@ -27,6 +41,7 @@ interface Port {
   protocol: string;
 }
 interface Volume {
+  type?: string;
   target: string;
   source?: string;
   read_only?: boolean;
@@ -34,11 +49,13 @@ interface Volume {
 interface Service {
   ports?: Port[];
   volumes?: Volume[];
+  networks?: Record<string, { aliases?: string[] } | null>;
   environment?: Record<string, string>;
   build?: { context: string; dockerfile: string };
 }
 interface Rendered {
   services: { api: Service; caddy: Service };
+  networks?: Record<string, { name?: string; external?: boolean }>;
 }
 
 const dirs: string[] = [];
@@ -183,6 +200,28 @@ describe.skipIf(!composeAvailable)("Compose files", () => {
     expect(volumeAt(caddy, "/media")[0].read_only).toBe(true);
   });
 
+  it("bind the media folder next to the compose file by default", () => {
+    const { api, caddy } = render().services;
+    for (const service of [api, caddy]) {
+      expect(volumeAt(service, "/media")).toHaveLength(1);
+      expect(volumeAt(service, "/media")[0]).toMatchObject({
+        type: "bind",
+        source: join(root, "deploy/media"),
+      });
+    }
+    expect(volumeAt(caddy, "/media")[0].read_only).toBe(true);
+    expect(volumeAt(api, "/media")[0].read_only).not.toBe(true);
+  });
+
+  it("MEDIA_HOST_DIR moves both mounts", () => {
+    const media = tempDir();
+    const { api, caddy } = render({ MEDIA_HOST_DIR: media }).services;
+    for (const service of [api, caddy]) {
+      expect(volumeAt(service, "/media")).toHaveLength(1);
+      expect(volumeAt(service, "/media")[0].source).toBe(media);
+    }
+  });
+
   it("mount the chosen media folder once, locally", () => {
     const media = tempDir();
     const { api, caddy } = render({ MEDIA_HOST_DIR: media }, [
@@ -193,6 +232,42 @@ describe.skipIf(!composeAvailable)("Compose files", () => {
       expect(volumeAt(service, "/media")).toHaveLength(1);
       expect(volumeAt(service, "/media")[0].source).toBe(media);
     }
+  });
+
+  it("the existing-Caddy overlay starts no Caddy", () => {
+    const { services } = render({ EDGE_NETWORK: "beself-test-edge" }, [
+      base,
+      edge,
+    ]);
+    expect(Object.keys(services)).toEqual(["api"]);
+  });
+
+  it("the API joins that Caddy's network as beselfos-api and publishes nothing", () => {
+    const { services, networks } = render(
+      { EDGE_NETWORK: "beself-test-edge" },
+      [base, edge],
+    );
+    const { api } = services;
+    expect(Object.keys(api.networks ?? {}).sort()).toEqual(["default", "edge"]);
+    expect(api.networks?.edge?.aliases).toEqual(["beselfos-api"]);
+    expect(api.ports).toBeUndefined();
+    expect(networks?.edge).toMatchObject({
+      name: "beself-test-edge",
+      external: true,
+    });
+  });
+
+  it("the overlay needs EDGE_NETWORK", () => {
+    const envFile = join(tempDir(), "env");
+    writeFileSync(
+      envFile,
+      Object.entries(required)
+        .map(([k, v]) => `${k}=${v}`)
+        .join("\n") + "\n",
+    );
+    const run = compose(envFile, [base, edge]);
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toContain("EDGE_NETWORK");
   });
 
   it("build the API from the repo root, locally", () => {
@@ -218,6 +293,133 @@ describe("the Caddyfile", () => {
     expect(caddyfile).toMatch(/hide \.\*/);
     expect(caddyfile).toContain("{$API_SITE}");
   });
+});
+
+describe("the edge site block", () => {
+  const block = read("deploy/edge/api.caddy");
+
+  it("serves media like deploy/Caddyfile and proxies the rest", () => {
+    for (const text of [
+      "{$BESELFOS_API_SITE}",
+      "root * /srv/beselfos/media",
+      "hide .*",
+      "Cross-Origin-Resource-Policy cross-origin",
+      "reverse_proxy beselfos-api:8080",
+    ]) {
+      expect(block, text).toContain(text);
+    }
+  });
+
+  it("does not compress, so Range answers stay byte-exact", () => {
+    expect(block).not.toMatch(/^\s*encode\b/m);
+  });
+});
+
+// `caddy adapt` reads a file and exits, so it needs no port. The image is on
+// the developer's machine and not in CI, where this is skipped.
+const caddyImage =
+  spawnSync("docker", ["image", "inspect", "caddy:2-alpine"], {
+    stdio: "ignore",
+  }).status === 0;
+
+describe.skipIf(!caddyImage)("Caddy accepts", () => {
+  it.each([
+    ["deploy/Caddyfile", "API_SITE"],
+    ["deploy/edge/api.caddy", "BESELFOS_API_SITE"],
+  ])(
+    "%s",
+    (file, key) => {
+      const run = spawnSync(
+        "docker",
+        [
+          "run",
+          "--rm",
+          "--network",
+          "none",
+          "-e",
+          `${key}=:80`,
+          "-v",
+          `${join(root, file)}:/etc/caddy/Caddyfile:ro`,
+          "caddy:2-alpine",
+          "caddy",
+          "adapt",
+          "--config",
+          "/etc/caddy/Caddyfile",
+          "--adapter",
+          "caddyfile",
+        ],
+        { encoding: "utf8" },
+      );
+      expect(run.status, run.stderr).toBe(0);
+    },
+    30_000,
+  );
+});
+
+describe("shell scripts", () => {
+  const scripts = [...listed("deploy"), ...listed("scripts/media")].filter(
+    (f) => f.endsWith(".sh") && existsSync(join(root, f)),
+  );
+
+  it("are all found", () => {
+    expect(scripts).toEqual(
+      expect.arrayContaining([
+        "deploy/bootstrap-check.sh",
+        "deploy/smoke.sh",
+        "deploy/vps-bootstrap.sh",
+        "scripts/media/convert.sh",
+        "scripts/media/sync.sh",
+      ]),
+    );
+  });
+
+  it.each(scripts)("%s parses", (file) => {
+    const run = spawnSync("bash", ["-n", join(root, file)], {
+      encoding: "utf8",
+    });
+    expect(run.status, run.stderr).toBe(0);
+  });
+
+  // The binary where there is one (CI's runner has it); else the image, which
+  // sees the repo read-only and has no network; else the check is skipped.
+  const image = "koalaman/shellcheck:stable";
+  const runner = ((): { cmd: string; args: string[] } | null => {
+    const has = (cmd: string, args: string[]) =>
+      spawnSync(cmd, args, { stdio: "ignore" }).status === 0;
+    if (has("shellcheck", ["--version"])) {
+      return { cmd: "shellcheck", args: scripts };
+    }
+    if (has("docker", ["image", "inspect", image])) {
+      return {
+        cmd: "docker",
+        args: [
+          "run",
+          "--rm",
+          "--network",
+          "none",
+          "-v",
+          `${root}:/mnt:ro`,
+          "-w",
+          "/mnt",
+          image,
+          ...scripts,
+        ],
+      };
+    }
+    return null;
+  })();
+
+  it.skipIf(runner === null)(
+    "pass shellcheck",
+    () => {
+      const run = spawnSync(runner!.cmd, runner!.args, {
+        cwd: root,
+        encoding: "utf8",
+      });
+      expect(run.status, `${run.stdout}${run.stderr}`).toBe(0);
+    },
+    30_000,
+  );
 });
 
 describe("the API image", () => {
@@ -275,19 +477,32 @@ describe("no domain is hard-coded", () => {
     /\b[a-z0-9-]+(\.[a-z0-9-]+)*\.(com|net|org|io|dev|app|ca|co|me|xyz|cloud|site)\b/gi;
   const matches = (file: string) => read(file).match(domain) ?? [];
 
+  // apt's package for Docker Engine, not a host.
+  const allowed: Record<string, string[]> = {
+    "deploy/vps-bootstrap.sh": ["docker.io"],
+  };
+  // Every file under deploy/ but .env.example, which has its own tests below.
   const hosted = [
-    "deploy/docker-compose.yml",
-    "deploy/docker-compose.local.yml",
-    "deploy/Caddyfile",
+    ...listed("deploy").filter((f) => f !== "deploy/.env.example"),
     "apps/api/Dockerfile",
-    "deploy/smoke.sh",
-    ...readdirSync(join(root, "scripts/media")).map(
-      (f) => `scripts/media/${f}`,
-    ),
+    ...listed("scripts/media"),
   ].filter((f) => existsSync(join(root, f)));
 
+  it("looks at every deploy file", () => {
+    expect(hosted).toEqual(
+      expect.arrayContaining([
+        "deploy/Caddyfile",
+        "deploy/edge/api.caddy",
+        "deploy/smoke.sh",
+        "deploy/vps-bootstrap.sh",
+        "scripts/media/sync.sh",
+      ]),
+    );
+  });
+
   it.each(hosted)("%s", (file) => {
-    expect(matches(file)).toEqual([]);
+    const fine = allowed[file] ?? [];
+    expect(matches(file).filter((m) => !fine.includes(m))).toEqual([]);
   });
 
   it("deploy/.env.example names only example hosts", () => {
@@ -310,13 +525,21 @@ describe("no domain is hard-coded", () => {
       (m) => m[1],
     );
     const used = new Set(
-      [
-        ...read("deploy/docker-compose.yml").matchAll(/\$\{([A-Z_]+)[:}]/g),
-        ...read("deploy/docker-compose.local.yml").matchAll(
-          /\$\{([A-Z_]+)[:}]/g,
-        ),
-      ].map((m) => m[1]),
+      readdirSync(join(root, "deploy"))
+        .filter((f) => /^docker-compose.*\.yml$/.test(f))
+        .flatMap((f) => [...read(`deploy/${f}`).matchAll(/\$\{([A-Z_]+)[:}]/g)])
+        .map((m) => m[1]),
     );
+    expect(used.has("EDGE_NETWORK")).toBe(true);
     for (const name of used) expect(keys).toContain(name);
+  });
+
+  it("deploy/.env.example keeps COMPOSE_FILE commented out", () => {
+    // An empty COMPOSE_FILE= makes Compose fail with "is a directory".
+    const example = read("deploy/.env.example");
+    expect(example).not.toMatch(/^COMPOSE_FILE=/m);
+    expect(example).toContain(
+      "# COMPOSE_FILE=docker-compose.yml:docker-compose.edge.yml",
+    );
   });
 });
