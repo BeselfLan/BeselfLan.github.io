@@ -1,0 +1,21 @@
+# The API's site block for a Caddy the host already runs (plan 7.6), used with
+# deploy/docker-compose.edge.yml. That Caddy needs, in its own stack:
+# - to be on the Docker network named by EDGE_NETWORK in deploy/.env;
+# - the media folder mounted read-only at the same path: /srv/beselfos/media;
+# - BESELFOS_API_SITE in its environment, the same value as API_SITE;
+# - an `import` of this file in its Caddyfile, then a reload.
+{$BESELFOS_API_SITE} {
+	# The same media handler as deploy/Caddyfile.
+	handle_path /media/files/* {
+		root * /srv/beselfos/media
+		header Cache-Control "public, max-age=86400"
+		header Cross-Origin-Resource-Policy cross-origin
+		header X-Content-Type-Options nosniff
+		file_server {
+			hide .*
+		}
+	}
+	handle {
+		reverse_proxy beselfos-api:8080
+	}
+}

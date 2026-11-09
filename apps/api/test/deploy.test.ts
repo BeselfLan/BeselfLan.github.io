@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it } from "vitest";
 const root = resolve(import.meta.dirname, "../../..");
 const base = join(root, "deploy/docker-compose.yml");
 const local = join(root, "deploy/docker-compose.local.yml");
+const edge = join(root, "deploy/docker-compose.edge.yml");
 const read = (file: string) => readFileSync(join(root, file), "utf8");
 
 // `docker compose config` only reads files, so it needs no daemon.
@@ -35,11 +36,13 @@ interface Volume {
 interface Service {
   ports?: Port[];
   volumes?: Volume[];
+  networks?: Record<string, { aliases?: string[] } | null>;
   environment?: Record<string, string>;
   build?: { context: string; dockerfile: string };
 }
 interface Rendered {
   services: { api: Service; caddy: Service };
+  networks?: Record<string, { name?: string; external?: boolean }>;
 }
 
 const dirs: string[] = [];
@@ -218,6 +221,42 @@ describe.skipIf(!composeAvailable)("Compose files", () => {
     }
   });
 
+  it("the existing-Caddy overlay starts no Caddy", () => {
+    const { services } = render({ EDGE_NETWORK: "beself-test-edge" }, [
+      base,
+      edge,
+    ]);
+    expect(Object.keys(services)).toEqual(["api"]);
+  });
+
+  it("the API joins that Caddy's network as beselfos-api and publishes nothing", () => {
+    const { services, networks } = render(
+      { EDGE_NETWORK: "beself-test-edge" },
+      [base, edge],
+    );
+    const { api } = services;
+    expect(Object.keys(api.networks ?? {}).sort()).toEqual(["default", "edge"]);
+    expect(api.networks?.edge?.aliases).toEqual(["beselfos-api"]);
+    expect(api.ports).toBeUndefined();
+    expect(networks?.edge).toMatchObject({
+      name: "beself-test-edge",
+      external: true,
+    });
+  });
+
+  it("the overlay needs EDGE_NETWORK", () => {
+    const envFile = join(tempDir(), "env");
+    writeFileSync(
+      envFile,
+      Object.entries(required)
+        .map(([k, v]) => `${k}=${v}`)
+        .join("\n") + "\n",
+    );
+    const run = compose(envFile, [base, edge]);
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toContain("EDGE_NETWORK");
+  });
+
   it("build the API from the repo root, locally", () => {
     const { api } = render({ MEDIA_HOST_DIR: tempDir() }, [
       base,
@@ -241,6 +280,67 @@ describe("the Caddyfile", () => {
     expect(caddyfile).toMatch(/hide \.\*/);
     expect(caddyfile).toContain("{$API_SITE}");
   });
+});
+
+describe("the edge site block", () => {
+  const block = read("deploy/edge/api.caddy");
+
+  it("serves media like deploy/Caddyfile and proxies the rest", () => {
+    for (const text of [
+      "{$BESELFOS_API_SITE}",
+      "root * /srv/beselfos/media",
+      "hide .*",
+      "Cross-Origin-Resource-Policy cross-origin",
+      "reverse_proxy beselfos-api:8080",
+    ]) {
+      expect(block, text).toContain(text);
+    }
+  });
+
+  it("does not compress, so Range answers stay byte-exact", () => {
+    expect(block).not.toMatch(/^\s*encode\b/m);
+  });
+});
+
+// `caddy adapt` reads a file and exits, so it needs no port. The image is on
+// the developer's machine and not in CI, where this is skipped.
+const caddyImage =
+  spawnSync("docker", ["image", "inspect", "caddy:2-alpine"], {
+    stdio: "ignore",
+  }).status === 0;
+
+describe.skipIf(!caddyImage)("Caddy accepts", () => {
+  it.each([
+    ["deploy/Caddyfile", "API_SITE"],
+    ["deploy/edge/api.caddy", "BESELFOS_API_SITE"],
+  ])(
+    "%s",
+    (file, key) => {
+      const run = spawnSync(
+        "docker",
+        [
+          "run",
+          "--rm",
+          "--network",
+          "none",
+          "-e",
+          `${key}=:80`,
+          "-v",
+          `${join(root, file)}:/etc/caddy/Caddyfile:ro`,
+          "caddy:2-alpine",
+          "caddy",
+          "adapt",
+          "--config",
+          "/etc/caddy/Caddyfile",
+          "--adapter",
+          "caddyfile",
+        ],
+        { encoding: "utf8" },
+      );
+      expect(run.status, run.stderr).toBe(0);
+    },
+    30_000,
+  );
 });
 
 describe("the API image", () => {
@@ -333,13 +433,21 @@ describe("no domain is hard-coded", () => {
       (m) => m[1],
     );
     const used = new Set(
-      [
-        ...read("deploy/docker-compose.yml").matchAll(/\$\{([A-Z_]+)[:}]/g),
-        ...read("deploy/docker-compose.local.yml").matchAll(
-          /\$\{([A-Z_]+)[:}]/g,
-        ),
-      ].map((m) => m[1]),
+      readdirSync(join(root, "deploy"))
+        .filter((f) => /^docker-compose.*\.yml$/.test(f))
+        .flatMap((f) => [...read(`deploy/${f}`).matchAll(/\$\{([A-Z_]+)[:}]/g)])
+        .map((m) => m[1]),
     );
+    expect(used.has("EDGE_NETWORK")).toBe(true);
     for (const name of used) expect(keys).toContain(name);
+  });
+
+  it("deploy/.env.example keeps COMPOSE_FILE commented out", () => {
+    // An empty COMPOSE_FILE= makes Compose fail with "is a directory".
+    const example = read("deploy/.env.example");
+    expect(example).not.toMatch(/^COMPOSE_FILE=/m);
+    expect(example).toContain(
+      "# COMPOSE_FILE=docker-compose.yml:docker-compose.edge.yml",
+    );
   });
 });
