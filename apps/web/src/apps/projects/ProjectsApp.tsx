@@ -1,9 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import type { KeyboardEvent } from "react";
 import type { AppProps } from "@/os/apps/types";
 import { Chip } from "@/os/ui/Chip";
 import { Carousel } from "./Carousel";
+import { PANEL_SHIFT } from "./detail";
+import { DetailPanel } from "./DetailPanel";
 import {
   FILTERS,
   countLabel,
@@ -15,11 +18,14 @@ import {
 import type { ProjectsArgs } from "./index";
 
 // The Projects window (plan 5.2, D22): the filter chips with Featured first,
-// the "n items" count, the selection, and the entries on the 3D ring (#94, D8).
-// #18 adds the detail panel beside it and sets the carousel's `offsetX`. This
-// file does not use `useScreen()`, so `registry.test.ts` can render it outside
-// a Screen, and it reaches the OS through `api` only. It never writes its own
-// args, its title or the URL: the URL keeps what the window was opened with.
+// the "n items" count, the selection, the entries on the 3D ring (#94, D8) and
+// the detail panel of the selected entry beside it. The selection is the open
+// state of the panel: it opens when an entry is selected, and the X or a plain
+// Escape deselects. While it is open the ring moves right by `PANEL_SHIFT`.
+// This file does not use `useScreen()`, so `registry.test.ts` can render it
+// outside a Screen, and it reaches the OS through `api` only. It never writes
+// its own args, its title or the URL: the URL keeps what the window was opened
+// with.
 
 // A number for each args object, given the first time the object is seen. The
 // ring is keyed by it, so a new open (a new args object, which `own.args ===
@@ -74,14 +80,48 @@ export default function ProjectsApp({ args, api }: AppProps<ProjectsArgs>) {
     setOwn({ args, view: { filter, selectedId: kept } });
   }
 
-  // Selecting the selected item keeps it selected: deselecting is #18's (the
-  // panel's X and Esc).
+  // Selecting the selected item keeps it selected: the panel's X and Escape
+  // are what deselect.
   function select(id: string) {
     setOwn({ args, view: { ...view, selectedId: id } });
   }
 
+  // The panel shows while the selected id is an entry. The ring's items point
+  // at it with aria-controls.
+  const panelId = useId();
+  const openEntry =
+    view.selectedId === null ? undefined : api.content.entry(view.selectedId);
+
+  // Closing is deselecting, and focus goes back to the ring's front item, so a
+  // keyboard visitor is not left on a control that has just gone. A plain
+  // focus() could scroll the window's overflow-hidden content box.
+  const rootEl = useRef<HTMLDivElement>(null);
+  function close() {
+    setOwn({ args, view: { ...view, selectedId: null } });
+    rootEl.current
+      ?.querySelector<HTMLElement>("[data-carousel] [data-front]")
+      ?.focus({ preventScroll: true });
+  }
+
+  // Escape is heard on this root, and not through api.registerShortcut: a
+  // window's shortcut would take the key before the App Grid could close
+  // itself. preventDefault is what keeps the OS's Escape (close all) from
+  // running, as the OS skips an event that is already prevented. Only a plain
+  // Escape while the panel is open; anything else passes through untouched.
+  function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+    if (e.key !== "Escape" || openEntry === undefined) return;
+    if (e.defaultPrevented || e.nativeEvent.isComposing) return;
+    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    e.preventDefault();
+    close();
+  }
+
   return (
-    <div className="flex h-full flex-col text-os-panel-fg">
+    <div
+      ref={rootEl}
+      onKeyDown={onKeyDown}
+      className="flex h-full flex-col text-os-panel-fg"
+    >
       {/* The window title already shows the name; the heading is for the page
           outline, and registry.test.ts looks for one named after the app. */}
       <h2 className="sr-only">Projects</h2>
@@ -110,7 +150,11 @@ export default function ProjectsApp({ args, api }: AppProps<ProjectsArgs>) {
       {/* The ring draws "Nothing here yet." itself. A filter change or new
           args rebuild it with no animation, because its size and its angle
           change with the item count; the selected entry stays in front when
-          it is in the new list. #18 puts the detail panel beside it. */}
+          it is in the new list. The panel is a sibling after the ring, never
+          inside its stage, and this div has no padding, border or margin: the
+          stage must keep its size (it carries the wheel and the drag). The
+          panel has one place in the tree, so a new selection updates it in
+          place instead of sliding it in again. */}
       <div className="relative min-h-0 flex-1">
         <Carousel
           key={`${view.filter}:${openId(args)}`}
@@ -119,8 +163,17 @@ export default function ProjectsApp({ args, api }: AppProps<ProjectsArgs>) {
           selectedId={view.selectedId}
           onSelect={select}
           paused={!visible}
-          offsetX={0}
+          offsetX={openEntry ? PANEL_SHIFT : 0}
+          panelId={panelId}
         />
+        {openEntry && (
+          <DetailPanel
+            id={panelId}
+            entry={openEntry}
+            api={api}
+            onClose={close}
+          />
+        )}
       </div>
     </div>
   );

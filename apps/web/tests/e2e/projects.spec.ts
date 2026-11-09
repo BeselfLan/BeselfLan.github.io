@@ -1,8 +1,8 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 // The Projects window in Chromium: the chips, the count, the selection and the
-// entry icons (#82), the 3D ring with its buttons and clicks (#94), and its
-// wheel, drag and keys (#95). #18 adds its own tests to this file.
+// entry icons (#82), the 3D ring with its buttons and clicks (#94), its wheel,
+// drag and keys (#95), and the detail panel with Play (#117).
 
 test.setTimeout(60_000); // The first request compiles the route.
 test.use({ viewport: { width: 1440, height: 900 } });
@@ -437,4 +437,168 @@ test("the keys step the ring and move focus", async ({ page }) => {
   await page.keyboard.press("Home");
   await expect(indicator(page)).toHaveText(/^1 \/ 13\b/);
   await expect(entry(page, "bash-shell")).toBeFocused();
+});
+
+// The detail panel and Play (#117). No demo file has to exist: a test that
+// opens an entry with a video routes the manifest to a fixture first. Without
+// a route the manifest is a 404, which Chromium also logs as a console error,
+// and the afterEach above fails. Keep these helpers after the tests above and
+// reuse them in the video player's tests (#118).
+
+// Routes only the manifest, by exact path. A glob such as **/media/** would
+// also catch /_next/static/media/, where the fonts are.
+async function routeManifest(page: Page, json: unknown) {
+  await page.route(
+    (url) => url.pathname === "/media/manifest.json",
+    (route) => route.fulfill({ json }),
+  );
+}
+// The browser skips a source of this type without a request, and the poster is
+// the entry's own icon, which exists.
+const fixtureEntry = (id: string) => ({
+  id,
+  sources: [{ src: `${id}.fixture`, type: "video/x-beselfos-fixture" }],
+  poster: `/icons/entries/${id}.svg`,
+  width: 640,
+  height: 360,
+  durationMs: 1000,
+});
+const FIXTURE_MANIFEST = [
+  fixtureEntry("deadknight"),
+  fixtureEntry("3d-engine"),
+];
+
+const panel = (page: Page) => win(page).locator("[data-detail-panel]");
+const play = (page: Page) =>
+  panel(page).getByRole("button", { name: "Play demo", exact: true });
+
+test("clicking an item opens the panel beside the ring, and a tech chip opens Skills", async ({
+  page,
+}) => {
+  await openProjects(page);
+  await settle(entry(page, "tetris-asm"));
+  const before = await settle(stage(page));
+  await entry(page, "tetris-asm").click();
+
+  await expect(panel(page)).toBeVisible();
+  await expect(
+    panel(page).getByRole("heading", {
+      level: 3,
+      name: "Tetris in MIPS Assembly (MARS)",
+    }),
+  ).toBeVisible();
+  // Tetris has no video.
+  await expect(play(page)).toHaveCount(0);
+
+  // The panel sits at the left edge of the main area, with the icon above the
+  // title. Its slide-in takes 250 ms.
+  const box = await settle(panel(page));
+  const edge = await panel(page).evaluate((el) => ({
+    left: el.getBoundingClientRect().left,
+    parent: el.parentElement!.getBoundingClientRect().left,
+  }));
+  expect(Math.abs(edge.left - edge.parent)).toBeLessThanOrEqual(1);
+  const icon = await panel(page).locator("img").boundingBox();
+  const title = await panel(page)
+    .getByRole("heading", { level: 3 })
+    .boundingBox();
+  expect(icon).not.toBeNull();
+  expect(title).not.toBeNull();
+  expect(icon!.y + icon!.height).toBeLessThanOrEqual(title!.y);
+
+  // The ring moved right, and the front item is clear of the panel.
+  const after = await settle(stage(page));
+  expect(after.x).toBeGreaterThan(before.x);
+  await settleRotation(page);
+  const front = await settle(inFront(page));
+  expect(front.x).toBeGreaterThanOrEqual(box.x + box.width - 1);
+
+  // The chip names the skill and opens Skills at it. "MIPS Assembly" is also
+  // in the item's name, so the panel is the scope.
+  await panel(page)
+    .getByRole("button", { name: "MIPS Assembly", exact: true })
+    .click();
+  await expect(page.locator('[data-window-id="skills"]')).toBeVisible({
+    timeout: 15_000,
+  });
+});
+
+test("a link to an item lands with the panel open, and the X and Esc close it", async ({
+  page,
+}) => {
+  await openProjects(page, "&item=tetris-asm");
+  await expect(
+    panel(page).getByRole("heading", {
+      level: 3,
+      name: "Tetris in MIPS Assembly (MARS)",
+    }),
+  ).toBeVisible();
+
+  await panel(page).getByRole("button", { name: "Close details" }).click();
+  await expect(panel(page)).toHaveCount(0);
+  await expect(win(page).locator("[data-selected]")).toHaveCount(0);
+  await expect(inFront(page)).toBeFocused();
+
+  // Clicking the front item opens it again, and Escape closes it. The OS's
+  // Escape (close all) skips an Escape that was already handled, so the app must
+  // prevent it. React listens on the document, so a listener added to the
+  // document now hears the event after the app's handler and before the window,
+  // where the OS listens, and notes whether it was prevented by then. (The OS
+  // prevents it itself later, so a listener on the window could not tell.)
+  await inFront(page).click();
+  await expect(panel(page)).toBeVisible();
+  await page.evaluate(() => {
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        document.body.dataset.escapePrevented = String(e.defaultPrevented);
+      }
+    });
+  });
+  await page.keyboard.press("Escape");
+  await expect(panel(page)).toHaveCount(0);
+  await expect(win(page).locator("[data-selected]")).toHaveCount(0);
+  await expect(page.locator("body")).toHaveAttribute(
+    "data-escape-prevented",
+    "true",
+  );
+  await expect(win(page)).toBeVisible();
+});
+
+test("Play opens a window whose title contains Demo, and it closes", async ({
+  page,
+}) => {
+  await routeManifest(page, FIXTURE_MANIFEST);
+  await openProjects(page, "&item=deadknight");
+
+  // "ready" means the static provider fetched the manifest, parsed it and found
+  // the entry in a real browser.
+  await expect(play(page)).toHaveAttribute("data-media", "ready", {
+    timeout: 15_000,
+  });
+  await expect(play(page)).toBeEnabled();
+  await play(page).click();
+
+  const player = page.locator('[data-window-id="video-player:deadknight"]');
+  await expect(player).toBeVisible({ timeout: 15_000 });
+  await expect(player.locator("[data-titlebar] h2")).toContainText("Demo");
+
+  await player.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(player).toHaveCount(0);
+});
+
+test("Play says Demo offline when the media is unavailable", async ({
+  page,
+}) => {
+  await routeManifest(page, []);
+  await openProjects(page, "&item=deadknight");
+
+  await expect(play(page)).toHaveAttribute("data-media", "offline", {
+    timeout: 15_000,
+  });
+  await expect(play(page)).toBeDisabled();
+
+  // A disabled button ignores the pointer, so the wrapper around it hears the
+  // hover. The tooltip is portaled into the screen, outside the window.
+  await play(page).locator("xpath=..").hover();
+  await expect(page.getByRole("tooltip")).toHaveText("Demo offline");
 });
