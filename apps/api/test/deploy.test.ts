@@ -5,6 +5,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -488,6 +489,7 @@ describe("shell scripts", () => {
     expect(scripts).toEqual(
       expect.arrayContaining([
         "deploy/bootstrap-check.sh",
+        "deploy/smoke-web.sh",
         "deploy/smoke.sh",
         "deploy/vps-bootstrap.sh",
         "scripts/media/convert.sh",
@@ -591,6 +593,121 @@ describe("the API image", () => {
         "!packages/content/package.json",
         "!packages/content/src/schema.ts",
       ].sort(),
+    );
+  });
+});
+
+// The checks run on a host that other projects share. They start containers
+// only under their own Compose project, and every one-off container has no
+// network and no ports, so none of them can reach or disturb anything else.
+describe("the local checks stay inside their own project", () => {
+  const scripts = [
+    "deploy/smoke.sh",
+    "deploy/smoke-web.sh",
+    "deploy/bootstrap-check.sh",
+  ];
+  const code = (file: string) =>
+    read(file)
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("#"));
+
+  it.each(scripts)(
+    "%s: every docker run has no network and no ports",
+    (file) => {
+      const runs = code(file).filter((l) => l.includes("docker run"));
+      expect(runs.length).toBeGreaterThan(0);
+      for (const line of runs) {
+        expect(line).toContain("--rm");
+        expect(line).toContain("--network none");
+        expect(line).not.toMatch(/ -p |--publish/);
+      }
+    },
+  );
+
+  it.each(scripts)(
+    "%s: removes and prunes nothing it did not start",
+    (file) => {
+      const text = read(file);
+      expect(text).not.toMatch(/\bprune\b|--rmi\b/);
+      expect(text).not.toMatch(/\bdocker\s+(stop|kill|rm|rmi|restart)\b/);
+      expect(text).not.toMatch(
+        /\bdocker\s+network\s+(create|rm|connect|disconnect)\b/,
+      );
+      // The edge overlay needs the host's real network: config only, in tests.
+      expect(text).not.toContain("docker-compose.edge.yml");
+    },
+  );
+
+  it.each(["deploy/smoke.sh", "deploy/smoke-web.sh"])(
+    "%s: Compose runs only under the project's own name, with the local override",
+    (file) => {
+      const runs = code(file).filter((l) => l.includes("docker compose"));
+      expect(runs).toHaveLength(1);
+      expect(runs[0]).toContain('docker compose -p "$project"');
+      expect(read(file)).toContain("docker-compose.local.yml");
+    },
+  );
+
+  // Compose lets a shell variable override --env-file, so a check clears the
+  // names its stack reads before it writes its own env file.
+  const cleared = (file: string): string[] => {
+    const unset = code(file)
+      .join("\n")
+      .replace(/\\\n/g, " ")
+      .match(/^unset (.*)$/m);
+    expect(unset, `${file} has an unset line`).not.toBeNull();
+    return unset![1].split(/\s+/);
+  };
+  const exampleKeys = [
+    ...read("deploy/.env.example").matchAll(/^([A-Z_]+)=/gm),
+  ].map((m) => m[1]);
+
+  it("deploy/smoke-web.sh clears every key of .env.example and the Compose variables", () => {
+    const unset = cleared("deploy/smoke-web.sh");
+    for (const name of [
+      ...exampleKeys,
+      "COMPOSE_FILE",
+      "COMPOSE_PROFILES",
+      "COMPOSE_PROJECT_NAME",
+    ]) {
+      expect(unset, name).toContain(name);
+    }
+  });
+
+  it("deploy/smoke.sh clears what the API stack reads, and the Compose variables", () => {
+    const unset = cleared("deploy/smoke.sh");
+    // It runs (a): no site, no host Caddy, and no rsync target.
+    const own = exampleKeys.filter(
+      (k) =>
+        !["WEB_SITE", "WEB_IMAGE", "NEXT_PUBLIC_API_URL"].includes(k) &&
+        !["EDGE_NETWORK", "MEDIA_SYNC_TARGET"].includes(k),
+    );
+    for (const name of [...own, "COMPOSE_FILE", "COMPOSE_PROFILES"]) {
+      expect(unset, name).toContain(name);
+    }
+  });
+
+  it.each(["deploy/smoke.sh", "deploy/smoke-web.sh"])(
+    "%s: refuses a port below 1024 before it does anything",
+    (file) => {
+      for (const port of ["80", "443", "1023", "70000", "abc"]) {
+        const run = spawnSync("bash", [join(root, file)], {
+          encoding: "utf8",
+          env: {
+            PATH: process.env.PATH,
+            HOME: process.env.HOME,
+            SMOKE_PORT: port,
+          },
+        });
+        expect(run.status, port).toBe(1);
+        expect(run.stderr, port).toContain("SMOKE_PORT");
+      }
+    },
+  );
+
+  it("smoke-web.sh is executable", () => {
+    expect(statSync(join(root, "deploy/smoke-web.sh")).mode & 0o111).not.toBe(
+      0,
     );
   });
 });
@@ -717,8 +834,10 @@ describe("no domain is hard-coded", () => {
       expect.arrayContaining([
         "deploy/Caddyfile",
         "deploy/edge/api.caddy",
+        "deploy/smoke-browser.mts",
         "deploy/smoke.sh",
         "deploy/vps-bootstrap.sh",
+        "deploy/web/Caddyfile",
         "scripts/media/sync.sh",
       ]),
     );

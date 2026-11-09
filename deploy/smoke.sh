@@ -2,15 +2,25 @@
 # Brings the local stack up under its own project name on a free loopback port,
 # proves the acceptance lines with curl, and tears the stack down again.
 # Needs docker (with compose), ffmpeg, curl and node. Prints SMOKE_OK.
-# Usage: deploy/smoke.sh        (SMOKE_PROJECT overrides the project name)
+# Usage: SMOKE_PORT=<port> SMOKE_PROJECT=<name> deploy/smoke.sh
+# Both are optional: the port is a free one on 127.0.0.1 (at least 1024), and
+# the project name defaults to beself-12-test.
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 project=${SMOKE_PROJECT:-beself-12-test}
 
 # Compose lets shell variables override --env-file, so none of ours may leak in.
+# A shell COMPOSE_PROFILES=web would start the site in a check of topology (a).
 unset API_SITE HTTP_PORT HTTPS_PORT PUBLIC_MEDIA_BASE_URL CORS_ORIGINS API_IMAGE \
-  MEDIA_HOST_DIR RESEND_API_KEY CONTACT_TO CONTACT_FROM ADMIN_TOKEN DMOJ_USER GITHUB_USER
+  MEDIA_HOST_DIR RESEND_API_KEY CONTACT_TO CONTACT_FROM ADMIN_TOKEN DMOJ_USER GITHUB_USER \
+  COMPOSE_FILE COMPOSE_PROFILES
+
+# Refused before anything runs: a port below 1024 is a host service's.
+if [[ -n ${SMOKE_PORT:-} ]] && { ! [[ $SMOKE_PORT =~ ^[0-9]+$ ]] || ((10#$SMOKE_PORT < 1024 || 10#$SMOKE_PORT > 65535)); }; then
+  echo "SMOKE FAIL: SMOKE_PORT must be a number from 1024 to 65535, not $SMOKE_PORT" >&2
+  exit 1
+fi
 
 for tool in docker ffmpeg curl node; do
   command -v "$tool" >/dev/null || { echo "SMOKE FAIL: needs $tool" >&2; exit 1; }
@@ -42,7 +52,7 @@ ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc=size=63x35:rate=10:durat
 echo hidden >"$work/media/.secret"
 chmod 644 "$work/media/.secret"
 
-port=$(node -e 'const s=require("net").createServer();s.listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})')
+port=${SMOKE_PORT:-$(node -e 'const s=require("net").createServer();s.listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})')}
 base=http://127.0.0.1:$port
 cat >"$work/env" <<ENV
 API_SITE=:80
@@ -71,7 +81,7 @@ api=$(compose ps -q api)
 [[ -z $(docker port "$api" 2>/dev/null || true) ]] || fail "the API publishes a port"
 
 # 5. No dev or web packages and no private files, and a small image.
-docker run --rm --entrypoint sh beselfos-api:local -c \
+docker run --rm --network none --entrypoint sh beselfos-api:local -c \
   'test -e node_modules/express && ! test -e node_modules/typescript && ! test -e node_modules/vitest && ! test -e node_modules/next && ! test -e node_modules/react && ! test -e .git && ! test -e media-src' \
   || fail "the image holds dev or web packages, or private files"
 size=$(docker image inspect -f '{{.Size}}' beselfos-api:local)
