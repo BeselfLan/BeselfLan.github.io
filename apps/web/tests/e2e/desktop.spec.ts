@@ -890,4 +890,52 @@ test.describe("the keyboard", () => {
     await page.keyboard.press("Enter");
     await expect(frame(page, "projects")).toBeVisible({ timeout: 15_000 });
   });
+
+  test("Tab walks a video's native controls, then goes on to the next window", async ({
+    page,
+  }) => {
+    // The controls sit in the browser's closed shadow root: the page sees only
+    // the <video> as the active element while focus is among them, and a
+    // focusin only when it leaves. So this needs a real browser and a real
+    // video: jsdom focuses neither.
+    await openDesktop(page, { path: "/?app=projects&item=deadknight" });
+    const play = frame(page, "projects")
+      .locator("[data-detail-panel]")
+      .getByRole("button", { name: "Play demo", exact: true });
+    await expect(play).toHaveAttribute("data-media", "ready", {
+      timeout: 15_000,
+    });
+    await play.click();
+    const demo = frame(page, "video-player:deadknight");
+    await expect(demo.locator('[data-video-state="ready"]')).toBeVisible({
+      timeout: 15_000,
+    });
+    const video = demo.locator("video");
+    const onVideo = () => isFocused(video);
+
+    await video.focus();
+    expect(await onVideo()).toBe(true);
+
+    // The first Tab goes into the native controls (the play button), so the
+    // video is still the active element. A desktop that moved on at once would
+    // skip them all.
+    await page.keyboard.press("Tab");
+    expect(await onVideo()).toBe(true);
+
+    // On through the rest of the controls. Leaving them is the browser's Tab,
+    // which would land on Activities, after the windows in the DOM; the
+    // desktop takes it on to the next window by z: Projects, behind the player.
+    for (let i = 0; i < 10 && (await onVideo()); i++) {
+      await page.keyboard.press("Tab");
+    }
+    expect(await onVideo()).toBe(false);
+    await expect.poll(() => focusedWindowId(page)).toBe("projects");
+    await expect(frame(page, "projects")).toHaveAttribute("data-focused", "");
+
+    // One video at a time: the host is short on memory. Projects is in front of
+    // the player now, so Close is pressed from the keyboard, not clicked.
+    await demo.getByRole("button", { name: "Close", exact: true }).focus();
+    await page.keyboard.press("Enter");
+    await expect(demo).toHaveCount(0);
+  });
 });
