@@ -116,8 +116,10 @@ function* lap<T>(list: readonly T[], start: number, dir: 1 | -1): Generator<T> {
   for (let i = 0; i < n; i++) yield list[(((start + i * dir) % n) + n) % n];
 }
 
-const FOLLOWING = Node.DOCUMENT_POSITION_FOLLOWING;
-const PRECEDING = Node.DOCUMENT_POSITION_PRECEDING;
+// Node.DOCUMENT_POSITION_FOLLOWING and _PRECEDING, as numbers: the server build
+// imports this file, and `Node` does not exist there.
+const FOLLOWING = 4;
+const PRECEDING = 2;
 
 /**
  * Moves focus one step. Where it starts depends on where the focus is:
