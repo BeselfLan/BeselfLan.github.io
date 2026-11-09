@@ -364,6 +364,7 @@ describe("shell scripts", () => {
   it("are all found", () => {
     expect(scripts).toEqual(
       expect.arrayContaining([
+        "deploy/bootstrap-check.sh",
         "deploy/smoke.sh",
         "deploy/vps-bootstrap.sh",
         "scripts/media/convert.sh",
