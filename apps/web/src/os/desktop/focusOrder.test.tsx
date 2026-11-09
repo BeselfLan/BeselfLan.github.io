@@ -1,6 +1,6 @@
 import { act, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Screen } from "@/os/screen/Screen";
 import { focusedWindow, os, useOS } from "@/os/store";
 import { WindowLayer } from "@/os/window/WindowLayer";
@@ -335,8 +335,21 @@ describe("useFocusOrder", () => {
   });
 
   it("stops on unmount", () => {
+    // Every key and focus listener the desktop puts on the document comes off
+    // again. The handler also checks its root, so a leaked listener would do
+    // nothing visible after unmount: only the listener itself shows it.
+    const added = vi.spyOn(document, "addEventListener");
+    const removed = vi.spyOn(document, "removeEventListener");
     const { unmount } = mount();
+    const mine = added.mock.calls
+      .filter(([type]) => type === "keydown" || type === "focusin")
+      .map(([, listener]) => listener);
+    expect(mine.length).toBeGreaterThanOrEqual(2);
     unmount();
+    for (const listener of mine) {
+      expect(removed.mock.calls.some(([, l]) => l === listener)).toBe(true);
+    }
+
     expect(document.activeElement).toBe(document.body);
     const event = tab();
     expect(event.defaultPrevented).toBe(false);

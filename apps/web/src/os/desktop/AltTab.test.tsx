@@ -222,8 +222,9 @@ describe("Alt+Tab", () => {
     expect(index()).toBe(0);
     expect(focusedId()).toBe("projects");
 
-    // The listeners are gone: a release now changes nothing.
-    releaseAlt();
+    // The listeners are gone: a release now changes nothing, and is left alone
+    // (true means nobody prevented it).
+    expect(releaseAlt()).toBe(true);
     expect(focusedId()).toBe("projects");
   });
 
