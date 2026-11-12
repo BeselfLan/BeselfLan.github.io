@@ -6,7 +6,7 @@ import { os } from "../store";
 import { AltTab } from "./AltTab";
 import { AppGrid } from "./AppGrid";
 import { ContextMenuHost } from "./ContextMenuHost";
-import { desktopMenu } from "./desktopMenu";
+import { desktopMenu, opensDesktopMenu } from "./desktopMenu";
 import { Dock } from "./Dock";
 import { useFocusFollowsWindow, useFocusOrder } from "./focusOrder";
 import { Notifications } from "./Notifications";
@@ -46,11 +46,14 @@ export function Desktop({ children }: { children: ReactNode }) {
   useFocusFollowsWindow();
 
   // Shift+F10 and the Menu key, with nothing focused, fire `contextmenu` at
-  // the body, and the wallpaper cannot take focus. So the menu opens at the
+  // the body as this first assumed, or, in Chromium (#158), at the element
+  // under the viewport's top-left corner, with no button. opensDesktopMenu
+  // tells them from a mouse right-click, which the wallpaper's own handler has
+  // already taken. The wallpaper cannot take focus, so the menu opens at the
   // middle of the screen, and its first item takes focus.
   useEffect(() => {
     const onContextMenu = (e: globalThis.MouseEvent) => {
-      if (e.target !== document.body || e.defaultPrevented) return;
+      if (!opensDesktopMenu(e, document.activeElement)) return;
       e.preventDefault();
       const r = portalTarget?.getBoundingClientRect();
       os.shell.openContextMenu(

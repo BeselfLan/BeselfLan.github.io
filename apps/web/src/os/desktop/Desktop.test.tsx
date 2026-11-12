@@ -306,6 +306,44 @@ describe("Desktop", () => {
       expect(document.activeElement?.getAttribute("role")).toBe("menuitem");
     });
 
+    // Chromium sends the keyboard's contextmenu to the element under the
+    // viewport's top-left corner, not to the body, with no button (#158).
+    function dispatchAtAnotherElement(button: number): MouseEvent {
+      mount();
+      vi.spyOn(
+        q("[data-screen-portal]")!,
+        "getBoundingClientRect",
+      ).mockReturnValue(new DOMRect(100, 50, 400, 300));
+      const elsewhere = document.createElement("div");
+      document.body.append(elsewhere);
+      onTestFinished(() => elsewhere.remove());
+      (document.activeElement as HTMLElement | null)?.blur();
+      expect(document.activeElement).toBe(document.body);
+      const event = new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        button,
+      });
+      act(() => {
+        elsewhere.dispatchEvent(event);
+      });
+      return event;
+    }
+
+    it("opens from the keyboard in Chromium: no button, at another element, nothing focused", () => {
+      const event = dispatchAtAnotherElement(-1);
+      expect(event.defaultPrevented).toBe(true);
+      expect(menu()).toMatchObject({ x: 300, y: 200 });
+      expect(labelsOf(menu()?.items)).toEqual(DESKTOP_LABELS);
+      expect(document.activeElement?.getAttribute("role")).toBe("menuitem");
+    });
+
+    it("leaves a mouse right-click outside the screen alone", () => {
+      const event = dispatchAtAnotherElement(2);
+      expect(event.defaultPrevented).toBe(false);
+      expect(menu()).toBeNull();
+    });
+
     it("leaves a contextmenu on the body that was already handled", () => {
       mount();
       const handled = (e: Event) => e.preventDefault();
