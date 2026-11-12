@@ -32,6 +32,17 @@ function listed(dir: string): string[] {
   return run.stdout.split("\n").filter((f) => f !== "");
 }
 
+// A host name: a dotted name that ends in a common top-level domain. The g flag
+// is for String.prototype.match, so never use it with test().
+const domain =
+  /\b[a-z0-9-]+(\.[a-z0-9-]+)*\.(com|net|org|io|dev|app|ca|co|me|xyz|cloud|site)\b/gi;
+
+// Every KEY= line of deploy/.env.example. COMPOSE_FILE is commented out there,
+// so it is not one of them.
+const envKeys = [...read("deploy/.env.example").matchAll(/^([A-Z_]+)=/gm)].map(
+  (m) => m[1],
+);
+
 // `docker compose config` only reads files, so it needs no daemon.
 const composeAvailable =
   spawnSync("docker", ["compose", "version"], { stdio: "ignore" }).status === 0;
@@ -814,8 +825,6 @@ describe("the site's headers", () => {
 });
 
 describe("no domain is hard-coded", () => {
-  const domain =
-    /\b[a-z0-9-]+(\.[a-z0-9-]+)*\.(com|net|org|io|dev|app|ca|co|me|xyz|cloud|site)\b/gi;
   const matches = (file: string) => read(file).match(domain) ?? [];
 
   // apt's package for Docker Engine, not a host.
@@ -864,9 +873,6 @@ describe("no domain is hard-coded", () => {
   });
 
   it("deploy/.env.example documents every variable the stack reads", () => {
-    const keys = [...read("deploy/.env.example").matchAll(/^([A-Z_]+)=/gm)].map(
-      (m) => m[1],
-    );
     const used = new Set(
       readdirSync(join(root, "deploy"))
         .filter((f) => /^docker-compose.*\.yml$/.test(f))
@@ -874,7 +880,7 @@ describe("no domain is hard-coded", () => {
         .map((m) => m[1]),
     );
     expect(used.has("EDGE_NETWORK")).toBe(true);
-    for (const name of used) expect(keys).toContain(name);
+    for (const name of used) expect(envKeys).toContain(name);
   });
 
   it("deploy/.env.example keeps COMPOSE_FILE commented out", () => {
@@ -887,5 +893,84 @@ describe("no domain is hard-coded", () => {
     expect(example).toContain(
       "# COMPOSE_FILE=docker-compose.yml:docker-compose.web.yml",
     );
+  });
+});
+
+// The runbook (#140) must stay true of the files it describes, and must not
+// leak where the owner's real site runs. The checks read the text of the doc.
+describe("docs/DEPLOY.md", () => {
+  const doc = read("docs/DEPLOY.md");
+
+  it("names every env key and every deploy file", () => {
+    // A key is a whole word: API_SITE is not found inside BESELFOS_API_SITE.
+    const missingKeys = envKeys.filter(
+      (key) => !new RegExp(`(^|[^A-Z_])${key}(?![A-Z_])`, "m").test(doc),
+    );
+    expect(missingKeys, "keys the doc does not name").toEqual([]);
+
+    // A path is whole too: deploy/web/Dockerfile is not found inside
+    // deploy/web/Dockerfile.dockerignore. A `.` that ends a sentence is fine.
+    const files = listed("deploy");
+    const missingFiles = files.filter((file) => {
+      const escaped = file.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return !new RegExp(`${escaped}(?![A-Za-z0-9/-]|\\.[A-Za-z])`).test(doc);
+    });
+    expect(missingFiles, "files the doc does not name").toEqual([]);
+
+    // A guard against a listing that found nothing and passed for it.
+    expect(envKeys.length).toBeGreaterThanOrEqual(18);
+    expect(files.length).toBeGreaterThanOrEqual(17);
+  });
+
+  it("names no real host", () => {
+    const hosts = doc.match(domain) ?? [];
+    expect(hosts.length).toBeGreaterThan(0);
+    const allowed =
+      /^(([a-z0-9-]+\.)*example\.com|beselflan\.github\.io|ghcr\.io|docker\.io|([a-z0-9-]+\.)*resend\.(com|dev))$/i;
+    expect(
+      hosts.filter((h) => !allowed.test(h)),
+      "hosts that are not example hosts",
+    ).toEqual([]);
+
+    // A pasted server address is a leak too: only loopback and the three
+    // documentation ranges (RFC 5737) may appear.
+    const addresses = doc.match(/\b\d+(\.\d+){3}\b/g) ?? [];
+    expect(
+      addresses.filter(
+        (a) =>
+          a !== "127.0.0.1" &&
+          !/^(192\.0\.2|198\.51\.100|203\.0\.113)\./.test(a),
+      ),
+      "addresses that are not loopback or documentation addresses",
+    ).toEqual([]);
+  });
+
+  it("literal blocks are deploy/edge/api.caddy and web.caddy with the host written in", () => {
+    // What a shared Caddy needs when it cannot take the env variables: the file's
+    // block with the host written in. Comments and blank lines do not count.
+    const lines = (text: string) =>
+      text
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => l !== "" && !l.startsWith("#"));
+    const blocks = [
+      ...doc.matchAll(/^```caddy[ \t]*\n([\s\S]*?)^```[ \t]*$/gm),
+    ];
+    expect(blocks.length).toBeGreaterThanOrEqual(2);
+
+    for (const [host, file, placeholder] of [
+      ["api.example.com", "deploy/edge/api.caddy", "{$BESELFOS_API_SITE} {"],
+      ["example.com", "deploy/edge/web.caddy", "{$BESELFOS_WEB_SITE} {"],
+    ]) {
+      const source = lines(read(file));
+      expect(source, `${file} opens with its site line`).toContain(placeholder);
+      const mine = blocks
+        .map((b) => lines(b[1]))
+        .filter((block) => block[0] === `${host} {`);
+      expect(mine, `the doc has one caddy block for ${host}`).toHaveLength(1);
+      expect(mine[0], `the block for ${host} follows ${file}`).toEqual(
+        source.map((l) => (l === placeholder ? `${host} {` : l)),
+      );
+    }
   });
 });
