@@ -184,7 +184,9 @@ test("the items face the viewer, with depth", async ({ page }) => {
   const opacity = await entry(page, "deadknight").evaluate(
     (el) => getComputedStyle(el).opacity,
   );
-  expect(Number(opacity)).toBeLessThan(0.5);
+  // Faded, but not below the 0.5 floor (#147).
+  expect(Number(opacity)).toBeGreaterThanOrEqual(0.5);
+  expect(Number(opacity)).toBeLessThan(0.55);
   await expect(entry(page, "bash-shell")).toHaveCSS("opacity", "1");
 });
 

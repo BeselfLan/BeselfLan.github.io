@@ -22,6 +22,7 @@ import {
   wheelToRotation,
   type Motion,
 } from "./carousel.math";
+import { contrastRatio, over } from "./wcag";
 
 // θ for the 13 featured entries.
 const θ = 360 / 13;
@@ -59,12 +60,32 @@ describe("depth styling", () => {
     expect(depthStyle(1)).toEqual({ scale: 1, opacity: 1, zIndex: 200 });
     const mid = depthStyle(0);
     expect(mid.scale).toBeCloseTo(0.85, 10);
-    expect(mid.opacity).toBeCloseTo(0.675, 10);
+    // The floor is 0.5, not C.1's 0.35: see depthStyle (#147).
+    expect(mid.opacity).toBeCloseTo(0.75, 10);
     expect(mid.zIndex).toBe(100);
     const back = depthStyle(-1);
     expect(back.scale).toBeCloseTo(0.7, 10);
-    expect(back.opacity).toBeCloseTo(0.35, 10);
+    expect(back.opacity).toBeCloseTo(0.5, 10);
     expect(back.zIndex).toBe(0);
+  });
+
+  it("the back label clears 4.5:1", () => {
+    // `#f7f7f7` is --os-panel-fg and `#1e1e1e` the window's bg-os-panel: a
+    // back item's label is the one over the window, at the item's opacity.
+    const panel = "#1e1e1e";
+    const label = (opacity: number) =>
+      contrastRatio(over("#f7f7f7", opacity, panel), panel);
+    expect(label(depthStyle(-1).opacity)).toBeGreaterThanOrEqual(4.5);
+    // C.1's old floor is below the bar, so this test can fail.
+    expect(label(0.35)).toBeLessThan(4.5);
+  });
+
+  it("over composites per channel", () => {
+    expect(over("#ffffff", 0.5, "#000000")).toBe("#808080");
+    expect(over("#336699", 1, "#ffffff")).toBe("#336699");
+    expect(over("#336699", 0, "#ffffff")).toBe("#ffffff");
+    expect(() => over("#fff", 0.5, "#000000")).toThrow();
+    expect(() => over("#ffffff", 0.5, "black")).toThrow();
   });
 
   it("reads the depth of an item from its turned angle", () => {

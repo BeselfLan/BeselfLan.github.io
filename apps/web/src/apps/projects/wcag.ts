@@ -13,6 +13,22 @@ export function relativeLuminance(hex: string): number {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
+/**
+ * `fg` at `alpha` (0 to 1) over `bg`, as a rounded `#rrggbb`: what `opacity`
+ * makes of a colour on a flat background, so `contrastRatio` can take it.
+ * Throws on any form but `#RRGGBB`.
+ */
+export function over(fg: string, alpha: number, bg: string): string {
+  for (const hex of [fg, bg]) {
+    if (!HEX.test(hex)) throw new Error(`expected #RRGGBB, got "${hex}"`);
+  }
+  const channel = (hex: string, i: number) => parseInt(hex.slice(i, i + 2), 16);
+  const mixed = [1, 3, 5].map((i) =>
+    Math.round(channel(fg, i) * alpha + channel(bg, i) * (1 - alpha)),
+  );
+  return `#${mixed.map((c) => c.toString(16).padStart(2, "0")).join("")}`;
+}
+
 /** (lighter + 0.05) / (darker + 0.05): 1 to 21, the same either way round. */
 export function contrastRatio(a: string, b: string): number {
   const [la, lb] = [relativeLuminance(a), relativeLuminance(b)];

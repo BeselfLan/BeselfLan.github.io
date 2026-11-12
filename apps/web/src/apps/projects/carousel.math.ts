@@ -70,12 +70,18 @@ export interface DepthStyle {
   zIndex: number;
 }
 
-/** C.1: `d` is the cosine of the item's angle, 1 in front and -1 behind. */
+/**
+ * C.1: `d` is the cosine of the item's angle, 1 in front and -1 behind.
+ *
+ * The opacity runs from 0.5 to 1, not C.1's 0.35 to 1 (#24, #147): at 0.35 the
+ * 12 px label of a back item is about 3.1:1 against the window, at 0.5 it is
+ * about 4.9:1, and WCAG asks for 4.5:1. Scale and z-index are C.1's.
+ */
 export function depthStyle(d: number): DepthStyle {
   const k = (1 + d) / 2;
   return {
     scale: 0.7 + 0.3 * k,
-    opacity: 0.35 + 0.65 * k,
+    opacity: 0.5 + 0.5 * k,
     zIndex: Math.round(100 * (1 + d)),
   };
 }
