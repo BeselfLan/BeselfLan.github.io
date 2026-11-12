@@ -1,5 +1,6 @@
 import { content } from "@beself/content";
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expectNoSeriousAxe } from "./axe";
 
 // The desktop: top bar, wallpaper, clock, popovers, the dock, the App Grid, the
 // desktop's right-click menu, the toasts and the welcome. Every test starts
@@ -991,5 +992,105 @@ test.describe("the keyboard", () => {
       .click();
     await expect(frame(page, "about")).toHaveCount(0);
     await expect.poll(() => focusedWindowId(page)).toBe("hello");
+  });
+});
+
+// The desktop's surfaces under axe (#146). Each scan is limited to one
+// surface, so a finding names the surface, and every scan waits for its
+// surface first. Reduced motion, so no surface is caught mid-fade: axe reads a
+// fading element at its current opacity, and the colours are the same either
+// way. 1440x900 is scale 1, so the laptop's CSS scale shrinks nothing.
+test.describe("axe on the desktop", () => {
+  test.use({
+    viewport: { width: 1440, height: 900 },
+    reducedMotion: "reduce",
+  });
+  test.setTimeout(90_000);
+
+  const PORTAL = ["[data-screen-portal]"];
+
+  test("the desktop passes axe", async ({ page }) => {
+    await openDesktop(page, { allowWelcome: true });
+
+    await test.step("the top bar, the dock, a toast and the signature", async () => {
+      await expect(page.locator("[data-toast]")).toBeVisible();
+      await expectNoSeriousAxe(page, "the top bar, dock, toasts, signature", {
+        include: [
+          "[data-topbar]",
+          "[data-dock]",
+          "[data-toasts]",
+          "[data-signature]",
+        ],
+      });
+      // The scan covered a toast: it has not left yet.
+      await expect(page.locator("[data-toast]")).toHaveCount(1);
+    });
+
+    await test.step("the App Grid", async () => {
+      await page.getByRole("button", { name: "Activities" }).click();
+      await expect(
+        page.getByRole("searchbox", { name: "Search apps" }),
+      ).toBeFocused();
+      await expectNoSeriousAxe(page, "the App Grid", {
+        include: ["[data-app-grid]"],
+      });
+      await page.keyboard.press("Escape");
+      await expect(page.locator("[data-app-grid]")).toBeHidden();
+    });
+
+    await test.step("the calendar", async () => {
+      await page.locator("[data-clock]").click();
+      const calendar = page.getByRole("dialog", {
+        name: "Calendar and notifications",
+      });
+      await expect(calendar).toBeVisible();
+      await expectNoSeriousAxe(page, "the calendar", { include: PORTAL });
+      await page.keyboard.press("Escape");
+      await expect(calendar).toHaveCount(0);
+    });
+
+    await test.step("the System menu", async () => {
+      await page.getByRole("button", { name: "System menu" }).click();
+      const menu = page.getByRole("dialog", { name: "System menu" });
+      await expect(menu).toBeVisible();
+      await expectNoSeriousAxe(page, "the System menu", { include: PORTAL });
+      await page.keyboard.press("Escape");
+      await expect(menu).toHaveCount(0);
+    });
+
+    await test.step("the dock menu", async () => {
+      await dockIcon(page, "projects").focus();
+      await page.keyboard.press("Shift+F10");
+      const portal = page.locator("[data-screen-portal]");
+      await expect(portal.getByRole("menu")).toBeVisible();
+      await expectNoSeriousAxe(page, "the dock menu", { include: PORTAL });
+      await page.keyboard.press("Escape");
+      await expect(portal.getByRole("menu")).toHaveCount(0);
+    });
+
+    await test.step("Alt+Tab", async () => {
+      await dockIcon(page, "about").click();
+      await expect(page.locator('[data-window-id="about"]')).toBeVisible({
+        timeout: 15_000,
+      });
+      // Hello comes from the App Grid, the second way in.
+      await page.getByRole("button", { name: "Activities" }).click();
+      await expect(
+        page.getByRole("searchbox", { name: "Search apps" }),
+      ).toBeFocused();
+      await page.keyboard.type("hello");
+      await page.keyboard.press("Enter");
+      await expect(page.locator('[data-window-id="hello"]')).toBeVisible({
+        timeout: 15_000,
+      });
+
+      await page.keyboard.down("Alt");
+      await page.keyboard.press("Tab");
+      await expect(page.locator("[data-alt-tab]")).toBeVisible();
+      await expectNoSeriousAxe(page, "the Alt+Tab strip", {
+        include: ["[data-alt-tab]"],
+      });
+      await page.keyboard.up("Alt");
+    });
   });
 });
