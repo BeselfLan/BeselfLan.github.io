@@ -1,0 +1,15 @@
+# The context is the repo root. Send only what the image copies.
+*
+!package.json
+!package-lock.json
+!apps/api/package.json
+!apps/web/package.json
+!apps/web/next.config.ts
+!apps/web/tsconfig.json
+!apps/web/src
+!apps/web/public
+!packages/content/package.json
+!packages/content/src
+!deploy/web/Caddyfile
+apps/web/src/**/*.test.*
+packages/content/src/**/*.test.*

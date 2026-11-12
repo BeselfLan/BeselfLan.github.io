@@ -123,7 +123,12 @@ else
   if command -v ufw >/dev/null; then
     ok "ufw is installed"
   else
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -q ufw
+    # Nothing above ran an update when Docker was already installed, and a fresh
+    # image can have empty package lists.
+    export DEBIAN_FRONTEND=noninteractive
+    if ! { apt-get update -q && apt-get install -y -q ufw; }; then
+      die "install ufw, or set SKIP_FIREWALL=1 and allow $ssh_port/tcp, 80/tcp, 443/tcp and 443/udp yourself"
+    fi
     changed "installed ufw"
   fi
   added=$(ufw show added)

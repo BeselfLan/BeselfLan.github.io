@@ -2,8 +2,9 @@
 # Proves that deploy/vps-bootstrap.sh does what it says and changes nothing the
 # second time, without touching this machine: every run of it happens inside a
 # throwaway ubuntu:24.04 container with no network and no ports, which exits on
-# its own. A stub docker and a stub ufw stand in for the real ones. Needs docker,
-# and pulls ubuntu:24.04 once. Prints BOOTSTRAP_OK.
+# its own (four containers: the runs, the refusals, not root, and no ufw). A stub
+# docker, a stub ufw and, in the last one, a stub apt-get stand in for the real
+# ones. Needs docker, and pulls ubuntu:24.04 once. Prints BOOTSTRAP_OK.
 # Usage: deploy/bootstrap-check.sh
 set -euo pipefail
 
@@ -24,15 +25,16 @@ box() {
 }
 
 # Runs first in every container but the non-root one: a copy of deploy/ in
-# /srv/beselfos (a developer's own .env left out, so it cannot count as an
-# existing one), a docker that answers every call with $FAKE_COMPOSE_VERSION,
-# and a ufw that keeps its rules in /var/lib/fake-ufw and logs its calls.
+# /srv/beselfos (a developer's own .env and media/ left out, so neither can
+# count as existing), a docker that answers every call with
+# $FAKE_COMPOSE_VERSION, and a ufw that keeps its rules in /var/lib/fake-ufw and
+# logs its calls.
 read -r -d '' prelude <<'PRELUDE' || true
 set -euo pipefail
 fail() { echo "BOOTSTRAP FAIL: $*" >&2; exit 1; }
 mkdir -p /srv/beselfos
 cp -a /src/. /srv/beselfos/
-rm -f /srv/beselfos/.env
+rm -rf /srv/beselfos/.env /srv/beselfos/media
 cat >/usr/local/bin/docker <<'STUB'
 #!/bin/sh
 echo "$FAKE_COMPOSE_VERSION"
@@ -169,6 +171,31 @@ out=$(bash /src/vps-bootstrap.sh </dev/null 2>&1) || code=$?
 [ "$code" != 0 ] || { echo "BOOTSTRAP FAIL: ran as non-root: $out" >&2; exit 1; }
 case $out in *"run as root"*) ;; *) echo "BOOTSTRAP FAIL: no run as root in: $out" >&2; exit 1 ;; esac
 if getent passwd deploy >/dev/null; then echo "BOOTSTRAP FAIL: created a user" >&2; exit 1; fi
+echo INNER_OK
+BODY
+
+# Container D: no ufw, and an apt that knows no package until it has updated, as
+# on a fresh image that already has Docker. The bootstrap must update first.
+check "no ufw" "$prelude" -e FAKE_COMPOSE_VERSION=2.40.3+ds1-0ubuntu1 <<'BODY'
+mv /usr/local/bin/ufw /root/fake-ufw
+cat >/usr/local/bin/apt-get <<'STUB'
+#!/bin/sh
+echo "$*" >>/var/lib/fake-apt-calls
+case "$*" in
+update*) touch /var/lib/fake-apt-lists ;;
+*" ufw")
+  if [ ! -e /var/lib/fake-apt-lists ]; then echo "E: Unable to locate package ufw" >&2; exit 100; fi
+  cp /root/fake-ufw /usr/local/bin/ufw ;;
+esac
+STUB
+chmod 755 /usr/local/bin/apt-get
+out=$(boot) || fail "no ufw: exited non-zero: $out"
+grep -qxF 'changed: installed ufw' <<<"$out" || fail "no ufw: ufw was not installed: $out"
+[ "$(grep -c '^allow ' /var/lib/fake-ufw/calls)" = 4 ] || fail "no ufw: ufw allow was called $(grep -c '^allow ' /var/lib/fake-ufw/calls) times"
+# The second run finds ufw and calls apt-get not at all.
+: >/var/lib/fake-apt-calls
+out2=$(boot) || fail "no ufw: run 2 exited non-zero: $out2"
+[ ! -s /var/lib/fake-apt-calls ] || fail "no ufw: run 2 called apt-get: $(cat /var/lib/fake-apt-calls)"
 echo INNER_OK
 BODY
 

@@ -1,6 +1,7 @@
 # The backend: the API behind one Caddy, and a media folder both can see.
 # Values come from deploy/.env (copy deploy/.env.example). For a laptop run
 # add -f deploy/docker-compose.local.yml; deploy/smoke.sh shows the commands.
+# In topology (b) the site joins them (docker-compose.web.yml).
 name: beselfos
 services:
   api:
@@ -41,6 +42,14 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     mem_limit: 128m
+  web:
+    # Topology (b) only: docker-compose.web.yml turns this profile on. No ports
+    # and no environment: the API origin is baked into the image, and Caddy is
+    # the only way in.
+    image: ${WEB_IMAGE:-beselfos-web:local}
+    profiles: [web]
+    restart: unless-stopped
+    mem_limit: 64m
 volumes:
   caddy_data:
   caddy_config:

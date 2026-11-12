@@ -1,0 +1,6 @@
+# The site's block for our own Caddy in topology (b), mounted by
+# deploy/docker-compose.web.yml. WEB_SITE comes from deploy/.env. The headers
+# come from the site image itself (deploy/web/Caddyfile).
+{$WEB_SITE} {
+	reverse_proxy web:8080
+}

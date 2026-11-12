@@ -1,8 +1,9 @@
 # For a host that already runs a Caddy on 80 and 443 (plan 7.6: one Caddy per
 # host). Ours never starts, and the API joins that Caddy's Docker network as
 # beselfos-api, so that Caddy is the one proxy hop in front of it. It imports
-# deploy/edge/api.caddy. Use after docker-compose.yml, for example
-# COMPOSE_FILE=docker-compose.yml:docker-compose.edge.yml in deploy/.env.
+# deploy/edge/api.caddy, and deploy/edge/web.caddy in topology (b), where the
+# site joins the network as beselfos-web. Use after docker-compose.yml, for
+# example COMPOSE_FILE=docker-compose.yml:docker-compose.edge.yml in deploy/.env.
 services:
   caddy:
     # Nothing enables this profile, so this Caddy never starts.
@@ -13,6 +14,12 @@ services:
       edge:
         # Not "api": the network is shared with other projects.
         aliases: [beselfos-api]
+  web:
+    networks:
+      default: {}
+      edge:
+        # Not "web", for the same reason.
+        aliases: [beselfos-web]
 networks:
   edge:
     name: ${EDGE_NETWORK:?set EDGE_NETWORK in deploy/.env}
