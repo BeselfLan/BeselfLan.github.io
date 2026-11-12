@@ -545,6 +545,61 @@ test("right-click on the desktop shows its menu, opens upwards low down, and Esc
   );
 });
 
+// Real keys only (#158). With nothing focused, Chromium sends the keyboard's
+// contextmenu to the element under the viewport's top-left corner, with no
+// button, not to the body. A synthetic event would test nothing here.
+test("Shift+F10 and the Menu key with nothing focused open the desktop menu at the middle of the screen", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openDesktop(page, { path: "/?boot=skip" });
+  // The screen box, not the portal: an empty portal may be hidden, and a hidden
+  // element has no bounding box.
+  const box = await rect(page.locator("[data-screen-box]"));
+  const s = box.width / 1440;
+  const menu = page.getByRole("menu", { name: "Context menu" });
+
+  for (const key of ["Shift+F10", "ContextMenu"]) {
+    await test.step(key, async () => {
+      await page.evaluate(() =>
+        (document.activeElement as HTMLElement | null)?.blur(),
+      );
+      expect(
+        await page.evaluate(() => document.activeElement === document.body),
+      ).toBe(true);
+
+      await page.keyboard.press(key);
+      await expect(menu).toBeVisible();
+      await expect(
+        menu.getByRole("menuitem", { name: "Change Background..." }),
+      ).toBeFocused();
+
+      // The anchor is the middle of the screen. The menu opens below it or
+      // above it, with the popover's 4 unit gap, depending on how the float
+      // falls against the half-height rule; either side proves the anchor.
+      await expect(async () => {
+        const m = await rect(menu);
+        expect(Math.abs(m.x - (box.x + 720 * s))).toBeLessThanOrEqual(2);
+        const below = Math.abs(m.y - (box.y + (450 + 4) * s));
+        const above = Math.abs(m.y + m.height - (box.y + (450 - 4) * s));
+        expect(Math.min(below, above)).toBeLessThanOrEqual(2);
+      }).toPass();
+
+      await page.keyboard.press("Escape");
+      await expect(menu).toHaveCount(0);
+    });
+  }
+
+  // A mouse right-click inside a window is left to the browser.
+  await dockIcon(page, "about").click();
+  const about = page.locator('[data-window-id="about"]');
+  await expect(about).toBeVisible();
+  await about.locator("[data-window-content]").click({ button: "right" });
+  // The menu would open in the same task as the event; wait a frame for it.
+  await page.evaluate(() => new Promise(requestAnimationFrame));
+  await expect(menu).toHaveCount(0);
+});
+
 test("the focused app's name stays clear of the clock at 390 px", async ({
   page,
 }) => {
