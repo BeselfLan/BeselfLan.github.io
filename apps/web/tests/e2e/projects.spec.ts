@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expectNoSeriousAxe } from "./axe";
 
 // The Projects window in Chromium: the chips, the count, the selection and the
 // entry icons (#82), the 3D ring with its buttons and clicks (#94), its wheel,
@@ -908,3 +909,65 @@ for (const { entry: entryId, media } of DEMOS) {
     await expect(demoWindow).toHaveCount(0);
   });
 }
+
+// Projects and its demo window under axe (#147). Each scan is limited to one
+// window. Reduced motion, so the panel does not slide during a scan; motion
+// still fades the window's opacity under it, and axe reads a fading element at
+// its current opacity, so each scan waits for the window's fade first (#145).
+// The Play tooltip is portaled outside the window, so it is not in these scans.
+test.describe("axe", () => {
+  test.use({ reducedMotion: "reduce" });
+  test.setTimeout(90_000);
+
+  const settled = (frame: Locator) =>
+    expect(frame.locator(":scope > div")).toHaveCSS("opacity", "1");
+
+  test("Projects and its demo window pass axe", async ({ page }) => {
+    await test.step("the ring", async () => {
+      await openProjects(page);
+      await settled(win(page));
+      await expectNoSeriousAxe(page, "Projects, the ring", {
+        include: ['[data-window-id="projects"]'],
+      });
+    });
+
+    await test.step("the panel, with Play ready", async () => {
+      // The real manifest and media: a lasting "ready" is needed below.
+      await openProjects(page, "&item=deadknight");
+      await expect(play(page)).toHaveAttribute("data-media", "ready", {
+        timeout: 15_000,
+      });
+      await settled(win(page));
+      await expectNoSeriousAxe(page, "Projects, the panel", {
+        include: ['[data-window-id="projects"]'],
+      });
+    });
+
+    await test.step("the demo window, ready", async () => {
+      await play(page).click();
+      const demo = player(page, "deadknight");
+      await expect(demo.locator('[data-video-state="ready"]')).toBeVisible({
+        timeout: 15_000,
+      });
+      await settled(demo);
+      await expectNoSeriousAxe(page, "the demo window", {
+        include: ['[data-window-id="video-player:deadknight"]'],
+      });
+      // One video at a time: the host is short on memory.
+      await demo.getByRole("button", { name: "Close", exact: true }).click();
+      await expect(demo).toHaveCount(0);
+    });
+  });
+
+  test("the offline Play passes axe", async ({ page }) => {
+    await routeManifest(page, []);
+    await openProjects(page, "&item=deadknight");
+    await expect(play(page)).toHaveAttribute("data-media", "offline", {
+      timeout: 15_000,
+    });
+    await settled(win(page));
+    await expectNoSeriousAxe(page, "Projects, the offline Play", {
+      include: ['[data-window-id="projects"]'],
+    });
+  });
+});
