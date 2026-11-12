@@ -61,6 +61,11 @@ export function useScreen(): ScreenValue {
   return value;
 }
 
+/** The screen around this component, or null outside a Screen. */
+export function useOptionalScreen(): ScreenValue | null {
+  return useContext(ScreenContext);
+}
+
 // Reserves the same strips as the laptop work area: y at the top, and x at
 // the bottom instead of the side.
 function workAreaFor(mode: ScreenMode, size: typeof VIRTUAL): WorkArea {

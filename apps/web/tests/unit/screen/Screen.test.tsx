@@ -6,6 +6,7 @@ import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   Screen,
+  useOptionalScreen,
   useScreen,
   useScreenMode,
   type ScreenValue,
@@ -176,6 +177,21 @@ describe("useScreen", () => {
   it("throws outside Screen", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     expect(() => renderHook(() => useScreen())).toThrow(/inside Screen/);
+  });
+
+  it("useOptionalScreen is null outside a Screen and the screen inside", () => {
+    const outside = renderHook(() => useOptionalScreen());
+    expect(outside.result.current).toBeNull();
+
+    const inside = renderHook(
+      () => ({ optional: useOptionalScreen(), strict: useScreen() }),
+      { wrapper: Screen },
+    );
+    expect(inside.result.current.optional).not.toBeNull();
+    expect(inside.result.current.optional?.portalTarget).not.toBeNull();
+    expect(inside.result.current.optional?.portalTarget).toBe(
+      inside.result.current.strict.portalTarget,
+    );
   });
 
   it("toScreenPoint removes the offset and divides by the scale", () => {
