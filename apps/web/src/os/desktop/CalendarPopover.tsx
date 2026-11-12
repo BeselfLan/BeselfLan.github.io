@@ -21,7 +21,7 @@ const closePopover = () => os.shell.setPopover(null);
 const DAY = "inline-flex size-8 items-center justify-center";
 
 function dayClass(cell: DayCell, isToday: boolean): string {
-  const dim = cell.inMonth ? "" : " text-white/40";
+  const dim = cell.inMonth ? "" : " text-white/50";
   const ring = isToday ? " rounded-full ring-2 ring-os-accent" : "";
   return `${DAY}${dim}${ring}`;
 }

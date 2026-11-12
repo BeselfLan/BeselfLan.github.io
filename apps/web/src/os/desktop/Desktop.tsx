@@ -8,7 +8,7 @@ import { AppGrid } from "./AppGrid";
 import { ContextMenuHost } from "./ContextMenuHost";
 import { desktopMenu } from "./desktopMenu";
 import { Dock } from "./Dock";
-import { useFocusOrder } from "./focusOrder";
+import { useFocusFollowsWindow, useFocusOrder } from "./focusOrder";
 import { Notifications } from "./Notifications";
 import { Signature } from "./Signature";
 import { TopBar } from "./TopBar";
@@ -42,6 +42,8 @@ export function Desktop({ children }: { children: ReactNode }) {
   // 4.8), whatever the paint order of the layers below.
   const rootRef = useRef<HTMLDivElement>(null);
   useFocusOrder(rootRef);
+  // Focus goes with the window that is opened, restored or chosen (#146).
+  useFocusFollowsWindow();
 
   // Shift+F10 and the Menu key, with nothing focused, fire `contextmenu` at
   // the body, and the wallpaper cannot take focus. So the menu opens at the
