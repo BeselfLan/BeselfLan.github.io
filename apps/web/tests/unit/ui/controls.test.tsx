@@ -1,5 +1,5 @@
 import { createRef } from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { Button } from "@/os/ui/Button";
 import { Chip } from "@/os/ui/Chip";
@@ -106,6 +106,47 @@ describe("Button", () => {
         .getByRole("button")
         .classList.contains("disabled:pointer-events-none"),
     ).toBe(true);
+  });
+
+  it("aria-disabled keeps focus and ignores the press", () => {
+    const spy = vi.fn();
+    render(
+      <Button aria-disabled onClick={spy}>
+        Play
+      </Button>,
+    );
+    const button = screen.getByRole("button", { name: "Play" });
+    expect((button as HTMLButtonElement).disabled).toBe(false);
+
+    act(() => button.focus());
+    expect(document.activeElement).toBe(button);
+
+    // A click is what Enter and Space fire. fireEvent returns false when the
+    // event was cancelled.
+    const notPrevented = fireEvent.click(button);
+    expect(spy).not.toHaveBeenCalled();
+    expect(notPrevented).toBe(false);
+  });
+
+  it("aria-disabled false is an ordinary button", () => {
+    const spy = vi.fn();
+    render(
+      <Button aria-disabled={false} onClick={spy}>
+        Play
+      </Button>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Play" }));
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("it looks disabled", () => {
+    render(<Button aria-disabled>Play</Button>);
+    const classes = screen.getByRole("button").classList;
+    expect(classes.contains("aria-disabled:opacity-50")).toBe(true);
+    // The pointer goes to the Tooltip wrapper around it, as for a disabled one.
+    expect(classes.contains("aria-disabled:pointer-events-none")).toBe(true);
+    expect(classes.contains("disabled:opacity-50")).toBe(true);
+    expect(classes.contains("disabled:pointer-events-none")).toBe(true);
   });
 });
 
