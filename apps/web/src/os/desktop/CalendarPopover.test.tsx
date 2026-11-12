@@ -6,6 +6,7 @@ import {
   setupBrowser,
   teardownBrowser,
 } from "../../../tests/unit/window/mountLayer";
+import { alphaOf, contrast, hex, luminance, over } from "./contrast.testutil";
 import { TopBar } from "./TopBar";
 
 const NAME = "Calendar and notifications";
@@ -80,10 +81,30 @@ describe("the calendar", () => {
   it("dims the days outside the month", () => {
     openCalendar();
     const spans = [...dialog().querySelectorAll("tbody td > span")];
-    const dim = spans.map((s) => s.classList.contains("text-white/40"));
+    const dim = spans.map((s) => s.classList.contains("text-white/50"));
     expect(dim.slice(0, 3)).toEqual([true, true, false]);
     // 31 days in December, 2 leading: cells 2 to 32 are in the month.
     expect(dim.filter((d) => !d)).toHaveLength(31);
+  });
+
+  it("a day outside the month is at least 4.5:1", () => {
+    openCalendar();
+    // December 2026 starts with two November days: the first cell is one.
+    const out = dialog().querySelector<HTMLElement>("tbody td > span")!;
+    expect(out.textContent).toBe("29");
+    const alpha = alphaOf(out.className, "text-white");
+    expect(
+      alpha,
+      `no text-white/NN class on "${out.className}"`,
+    ).not.toBeNull();
+
+    // The popover's own background, --os-panel (bg-os-panel).
+    const panel = hex("#1e1e1e");
+    const white = hex("#ffffff");
+    const ratio = (a: number) => contrast(over(white, a, panel), panel);
+    expect(ratio(alpha!)).toBeGreaterThanOrEqual(4.5);
+    // The old 0.40 is below the bar, so this test can fail.
+    expect(ratio(0.4)).toBeLessThan(4.5);
   });
 
   it("marks today by date", () => {
@@ -121,7 +142,7 @@ describe("the calendar", () => {
     expect(marked()).toHaveLength(1);
     expect(marked()[0].textContent).toBe("4");
     expect(marked()[0].querySelector("span")!.className).toContain(
-      "text-white/40",
+      "text-white/50",
     );
   });
 
@@ -235,5 +256,26 @@ describe("notifications, newest first", () => {
     act(() => os.shell.setPopover(null));
     fireEvent.click(q("[data-clock]")!);
     expect(rows()).toEqual(["A"]);
+  });
+});
+
+describe("the contrast helper", () => {
+  it("agrees with WCAG", () => {
+    const black = hex("#000000");
+    const white = hex("#ffffff");
+    expect(contrast(white, black)).toBeCloseTo(21, 5);
+    expect(contrast(black, white)).toBeCloseTo(21, 5);
+    const grey = hex("#767676");
+    expect(contrast(grey, grey)).toBe(1);
+    // The grey that only just passes 4.5:1 on white.
+    expect(Math.abs(contrast(grey, white) - 4.54)).toBeLessThan(0.01);
+    // Straight alpha, per channel.
+    expect(over(white, 0.5, black)).toEqual([127.5, 127.5, 127.5]);
+    expect(luminance(white)).toBeCloseTo(1, 10);
+    expect(luminance(black)).toBe(0);
+    // Whole classes only.
+    expect(alphaOf("a text-white/50 b", "text-white")).toBe(0.5);
+    expect(alphaOf("text-white/50", "bg-white")).toBeNull();
+    expect(alphaOf("text-white/50x text-white", "text-white")).toBeNull();
   });
 });
