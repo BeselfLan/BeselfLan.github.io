@@ -11,6 +11,7 @@
     "apps/web/src/os/screen/Laptop.tsx",
     "apps/web/tests/setup.ts", "apps/web/tests/unit/**",
     "apps/web/tests/e2e/smoke.spec.ts", "apps/web/tests/e2e/window.spec.ts",
+    "apps/web/tests/e2e/axe.ts",
     "packages/content/*", "packages/content/src/schema.ts", "packages/content/src/index.ts",
     "packages/content/src/*.test.ts", "packages/content/src/data/**",
     "scripts/new-app.ts", "scripts/check-ownership.ts", "scripts/gh/**",

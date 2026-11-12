@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { axeFindings, expectNoSeriousAxe } from "./axe";
 
 test("the composed page renders with tokens and fonts, no console errors", async ({
   page,
@@ -149,4 +150,57 @@ test.describe("phone", () => {
 
     expect(errors).toEqual([]);
   });
+});
+
+// The helper every a11y check shares (axe.ts). A page that is known to be
+// wrong must show up, or a green scan elsewhere would mean nothing.
+test("the axe helper catches a violation", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("console", (msg) => {
+    if (msg.type() === "error") errors.push(msg.text());
+  });
+  page.on("pageerror", (err) => errors.push(err.message));
+
+  await page.setContent("<main><h1>t</h1><button></button></main>");
+  const { findings, passes } = await axeFindings(page);
+
+  const nameless = findings.find((f) => f.id === "button-name");
+  expect(nameless?.impact).toBe("critical");
+  expect(nameless?.targets).toEqual(["button"]);
+  // Rules that passed come back too, so a check can tell a rule ran.
+  expect(passes).toContain("page-has-heading-one");
+
+  expect(errors).toEqual([]);
+});
+
+// The frame, the title bar and the Hello app are the lead's, so this is the
+// scan that can be fixed in this issue. The rest of the desktop is #146 and
+// #149's.
+test("the Hello window passes axe", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("console", (msg) => {
+    if (msg.type() === "error") errors.push(msg.text());
+  });
+  page.on("pageerror", (err) => errors.push(err.message));
+
+  // A laptop scale of 1, so no target shrinks.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.addInitScript(() =>
+    sessionStorage.setItem("beselfos:welcomed", "1"),
+  );
+  await page.goto("/?app=hello&boot=skip");
+  await expect(page.locator("[data-boot-stage]")).toHaveCount(0);
+
+  const win = page.locator('[data-window-id="hello"]');
+  await expect(win.getByRole("heading", { name: "Hello, world" })).toBeVisible({
+    timeout: 15_000,
+  });
+  // Past the enter fade: a window scanned mid-fade fails colour contrast.
+  await expect(win.locator(":scope > div")).toHaveCSS("opacity", "1");
+
+  await expectNoSeriousAxe(page, "hello window", {
+    include: ['[data-window-id="hello"]'],
+  });
+
+  expect(errors).toEqual([]);
 });
