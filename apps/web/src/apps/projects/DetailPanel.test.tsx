@@ -10,10 +10,10 @@ import {
 } from "../../../tests/unit/window/mountLayer";
 import { DetailPanel, type DetailPanelProps } from "./DetailPanel";
 
-// The panel inside the real Screen, because the offline Play's Tooltip calls
-// useScreen(). The api is a fake with the real content. Only setTimeout is
-// faked (for the Tooltip's 400 ms delay); promises settle in microtasks, which
-// `flush` runs inside act().
+// The panel inside the real Screen, because Play's Tooltip portals into it:
+// outside a Screen it never shows. The api is a fake with the real content.
+// Only setTimeout is faked (for the Tooltip's 400 ms delay); promises settle in
+// microtasks, which `flush` runs inside act().
 
 beforeEach(() => {
   setupBrowser();
@@ -78,6 +78,15 @@ function ui(
   );
 }
 
+/** What a sighted visitor reads: the text without the `.sr-only` parts. */
+function visibleText(el: Element): string {
+  const copy = el.cloneNode(true) as Element;
+  for (const hidden of copy.querySelectorAll(".sr-only")) hidden.remove();
+  return (copy.textContent ?? "").trim();
+}
+
+const tooltip = () => document.querySelector('[role="tooltip"]');
+
 const play = () => screen.queryByRole("button", { name: "Play demo" });
 const playButton = () => screen.getByRole("button", { name: "Play demo" });
 
@@ -130,7 +139,7 @@ describe("DetailPanel", () => {
 
     // One link, opened in a new tab without handing over the opener.
     const links = screen.getAllByRole("link");
-    expect(links.map((a) => a.textContent)).toEqual(["GitHub"]);
+    expect(links.map(visibleText)).toEqual(["GitHub"]);
     expect(links[0].getAttribute("href")).toBe(
       "https://github.com/KenC2006/DeadKnight",
     );
@@ -222,7 +231,7 @@ describe("DetailPanel", () => {
     render(ui(entry, api));
     const group = screen.getByRole("group", { name: "Links" });
     const links = within(group).getAllByRole("link");
-    expect(links.map((a) => [a.textContent, a.getAttribute("href")])).toEqual([
+    expect(links.map((a) => [visibleText(a), a.getAttribute("href")])).toEqual([
       ["GitHub", "https://github.com/x/y"],
       ["Website", "https://site.example/"],
       ["Live demo", "https://demo.example/"],
@@ -230,6 +239,27 @@ describe("DetailPanel", () => {
     for (const a of links) {
       expect(a.getAttribute("target")).toBe("_blank");
       expect(a.getAttribute("rel")).toBe("noopener noreferrer");
+    }
+  });
+
+  it("links say they open a new tab", () => {
+    const { api } = makeApi();
+    const entry = {
+      ...entryOf("tetris-asm"),
+      links: {
+        demo: "https://demo.example/",
+        site: "https://site.example/",
+        github: "https://github.com/x/y",
+      },
+    };
+    render(ui(entry, api));
+    const group = screen.getByRole("group", { name: "Links" });
+    for (const name of ["GitHub", "Website", "Live demo"]) {
+      const link = within(group).getByRole("link", {
+        name: `${name} (opens in a new tab)`,
+      });
+      // The visible text is the label alone.
+      expect(visibleText(link)).toBe(name);
     }
   });
 
@@ -294,19 +324,87 @@ describe("DetailPanel", () => {
       await flush();
 
       const button = playButton() as HTMLButtonElement;
-      expect(button.disabled).toBe(true);
+      // aria-disabled, not disabled: it can still take focus.
+      expect(button.getAttribute("aria-disabled")).toBe("true");
+      expect(button.disabled).toBe(false);
       expect(button.getAttribute("data-media")).toBe("offline");
 
-      // The wrapper hears the hover of a disabled button.
+      // The wrapper hears the hover of the button.
       fireEvent.pointerEnter(button, { pointerType: "mouse" });
       act(() => {
         vi.advanceTimersByTime(400);
       });
-      const tip = document.querySelector('[role="tooltip"]');
-      expect(tip?.textContent).toBe("Demo offline");
+      expect(tooltip()?.textContent).toBe("Demo offline");
 
       fireEvent.click(button);
       expect(openApp).not.toHaveBeenCalled();
+    });
+
+    it("offline Play is reachable and says why", async () => {
+      const { api, openApp } = makeApi(() => Promise.resolve(null));
+      render(ui("deadknight", api));
+      await flush();
+
+      const button = playButton() as HTMLButtonElement;
+      expect(button.getAttribute("aria-disabled")).toBe("true");
+      // `disabled` would make it unreachable by keyboard.
+      expect(button.disabled).toBe(false);
+      act(() => button.focus());
+      expect(document.activeElement).toBe(button);
+      // Keyboard focus shows the tooltip at once, and points the button at it.
+      expect(tooltip()?.textContent).toBe("Demo offline");
+      expect(button.getAttribute("aria-describedby")).toBe(tooltip()?.id);
+
+      fireEvent.click(button);
+      expect(openApp).not.toHaveBeenCalled();
+    });
+
+    it("Play stays one element when the answer arrives", async () => {
+      let answer!: (found: null) => void;
+      const { api } = makeApi(
+        () =>
+          new Promise((resolve) => {
+            answer = resolve;
+          }),
+      );
+      render(ui("deadknight", api));
+      await flush();
+
+      const button = playButton();
+      expect(button.getAttribute("data-media")).toBe("checking");
+      act(() => button.focus());
+      expect(tooltip()).toBeNull();
+
+      answer(null);
+      await flush();
+      // The same node, still focused, and now disabled in the aria sense.
+      expect(playButton()).toBe(button);
+      expect(document.activeElement).toBe(button);
+      expect(button.getAttribute("data-media")).toBe("offline");
+      expect(button.getAttribute("aria-disabled")).toBe("true");
+      // The tooltip anchored when it got focus, and only `disabled` gated it.
+      expect(tooltip()?.textContent).toBe("Demo offline");
+    });
+
+    it("an online Play shows no tooltip", async () => {
+      const { api } = makeApi();
+      render(ui("deadknight", api));
+      await flush();
+
+      const button = playButton();
+      expect(button.getAttribute("data-media")).toBe("ready");
+      expect(button.hasAttribute("aria-disabled")).toBe(false);
+      act(() => button.focus());
+      expect(document.activeElement).toBe(button);
+      expect(tooltip()).toBeNull();
+      expect(button.hasAttribute("aria-describedby")).toBe(false);
+
+      // Nor on hover.
+      fireEvent.pointerEnter(button, { pointerType: "mouse" });
+      act(() => {
+        vi.advanceTimersByTime(400);
+      });
+      expect(tooltip()).toBeNull();
     });
 
     it("is absent without a video, and nothing is asked", async () => {

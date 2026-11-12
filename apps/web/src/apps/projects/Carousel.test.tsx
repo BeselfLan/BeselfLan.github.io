@@ -187,9 +187,10 @@ describe("Carousel", () => {
     const bash = item(container, "bash-shell");
     expect(frontIds(container)).toEqual(["bash-shell"]);
     expect(bash.style.opacity).toBe("1");
-    expect(Number(item(container, "deadknight").style.opacity)).toBeLessThan(
-      0.4,
-    );
+    // Almost opposite the front: faded, but not below the 0.5 floor (#147).
+    const back = Number(item(container, "deadknight").style.opacity);
+    expect(back).toBeGreaterThanOrEqual(0.5);
+    expect(back).toBeLessThan(0.55);
     const all = container.querySelectorAll<HTMLElement>("[data-entry-id]");
     expect(all).toHaveLength(13);
     for (const el of all) {

@@ -22,6 +22,19 @@ import type { VideoPlayerArgs } from "./index";
 // object, and only the window should come forward: an effect keyed on `args`
 // would resolve again and restart the video.
 //
+// One `role="status"` line is there from the first render, in every state, and
+// holds the state's sentence (empty while the video plays). A live region that
+// appears together with its text is often not announced, so the region stays and
+// only its text changes. It takes focus (tabindex -1) so that Retry has
+// somewhere to hand focus to (#147): the Retry button unmounts while the next
+// attempt loads, and focus left on it would drop to the page. Retry parks focus
+// on the status line; when the attempt settles, and focus is still there or was
+// lost, it goes to the video if it is ready, or to the new Retry if the attempt
+// is offline or failed. A video can fail after it was ready (a source that
+// errors), and that removes the focused <video>, so the hand-off stays armed
+// through "ready" and acts again. Focus the visitor moved elsewhere is left
+// alone, and disarms it. Refs and focus() only: no state is set in the effect.
+//
 // No autoplay, and no keys: the native controls own them, and Escape belongs
 // to the App Grid. The player ignores the provider's status(): a resolved
 // entry plays, because Play in Projects is the gate (plan 5.4).
@@ -33,6 +46,15 @@ interface Answer {
 }
 
 type State = "none" | "loading" | "offline" | "error" | "ready";
+
+// What the status line says, and nothing while the video plays.
+const SENTENCE: Record<State, string> = {
+  none: "This project has no demo.",
+  loading: "Loading the demo...",
+  offline: "Demo offline",
+  error: "This demo could not load.",
+  ready: "",
+};
 
 // What stopDownload took off each <source>, so that a remount can put it back.
 const stopped = new WeakMap<HTMLSourceElement, string>();
@@ -147,8 +169,37 @@ export default function VideoPlayerApp({
     [api],
   );
 
-  const retry = () => setAttempt((a) => a + 1);
+  // Retry's hand-off of focus: see the top of the file.
+  const statusRef = useRef<HTMLParagraphElement>(null);
+  const retryRef = useRef<HTMLButtonElement>(null);
+  const retrying = useRef(false);
+  const retry = () => {
+    retrying.current = true;
+    statusRef.current?.focus({ preventScroll: true });
+    setAttempt((a) => a + 1);
+  };
   const fail = () => setFailed(attempt);
+
+  useEffect(() => {
+    if (!retrying.current || state === "loading") return;
+    const active = document.activeElement;
+    const lost =
+      active === null ||
+      active === document.body ||
+      active === statusRef.current;
+    if (!lost) {
+      // The visitor moved focus themselves.
+      retrying.current = false;
+      return;
+    }
+    if (state === "ready") {
+      // Stay armed: the video may still fail and take focus with it.
+      videoRef.current?.focus({ preventScroll: true });
+      return;
+    }
+    if (state !== "none") retryRef.current?.focus({ preventScroll: true });
+    retrying.current = false;
+  }, [state]);
 
   return (
     <div
@@ -156,26 +207,19 @@ export default function VideoPlayerApp({
       className="relative flex h-full flex-col items-center justify-center gap-3 bg-black text-os-panel-fg"
     >
       <h2 className="sr-only">{`Video Player: ${name}`}</h2>
-      {state === "none" && <p>This project has no demo.</p>}
-      {state === "loading" && (
-        <div
-          aria-busy="true"
-          className="flex h-full w-full items-center justify-center"
-        >
-          <p>Loading the demo...</p>
-        </div>
-      )}
-      {state === "offline" && (
-        <>
-          <p aria-live="polite">Demo offline</p>
-          <Button onClick={retry}>Retry</Button>
-        </>
-      )}
-      {state === "error" && (
-        <>
-          <p aria-live="polite">This demo could not load.</p>
-          <Button onClick={retry}>Retry</Button>
-        </>
+      <p
+        ref={statusRef}
+        role="status"
+        tabIndex={-1}
+        data-video-status=""
+        className={state === "ready" ? "sr-only outline-none" : "outline-none"}
+      >
+        {SENTENCE[state]}
+      </p>
+      {(state === "offline" || state === "error") && (
+        <Button ref={retryRef} onClick={retry}>
+          Retry
+        </Button>
       )}
       {state === "ready" && media !== null && (
         <video
