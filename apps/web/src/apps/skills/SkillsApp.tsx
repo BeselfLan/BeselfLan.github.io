@@ -173,10 +173,18 @@ export default function SkillsApp({ args, api }: AppProps<SkillsArgs>) {
         style={{ height: TOOLBAR_HEIGHT }}
         className="flex shrink-0 items-center gap-3 border-b border-white/10 px-4"
       >
-        <div role="group" aria-label="Category" className="flex gap-2">
+        {/* In a narrow window the tabs scroll sideways, so "List view" stays
+            inside it; p-1 keeps room for the chips' focus ring, which a scroll
+            container would clip. */}
+        <div
+          role="group"
+          aria-label="Category"
+          className="flex min-w-0 gap-2 overflow-x-auto p-1"
+        >
           {TABS.map((t) => (
             <Chip
               key={t.id}
+              className="shrink-0"
               selected={view.tab === t.id}
               onClick={() => choose(t.id)}
             >
@@ -186,7 +194,7 @@ export default function SkillsApp({ args, api }: AppProps<SkillsArgs>) {
         </div>
         <Button
           variant="ghost"
-          className="ml-auto"
+          className="ml-auto shrink-0"
           aria-pressed={list}
           onClick={() => setListChoice(!list)}
         >
@@ -232,13 +240,13 @@ export default function SkillsApp({ args, api }: AppProps<SkillsArgs>) {
           role="group"
           aria-labelledby={labelId}
           style={{ height: FOOTER_HEIGHT }}
-          className="flex shrink-0 items-center gap-2 border-t border-white/10 px-4"
+          className="flex shrink-0 items-center gap-2 overflow-x-auto border-t border-white/10 px-4"
         >
-          <span id={labelId} className="text-xs opacity-70">
+          <span id={labelId} className="shrink-0 text-xs opacity-70">
             Practices
           </span>
           {practices.map((p) => (
-            <span key={p.id} data-practice={p.id}>
+            <span key={p.id} data-practice={p.id} className="shrink-0">
               <Chip
                 selected={view.selectedId === p.id}
                 onClick={() => pressPractice(p.id)}
