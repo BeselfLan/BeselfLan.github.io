@@ -57,6 +57,8 @@ async function openDesktop(
 
 const frame = (page: Page, id: string) =>
   page.locator(`[data-window-id="${id}"]`);
+const dockIcon = (page: Page, id: string) =>
+  page.locator(`[data-dock-app="${id}"]`);
 const surface = (page: Page, id: string) =>
   frame(page, id).locator(":scope > div");
 
@@ -204,4 +206,224 @@ test.describe("the desktop and every app pass axe, whole page", () => {
     expect(skills.passes, "Skills' panel").toContain("color-contrast");
     expect(skills.findings, "Skills' panel").toEqual([]);
   });
+});
+
+// The keyboard journeys. Each one uses real keys and no click, so it fails if
+// a surface cannot be reached, or if focus is left behind. Motion is allowed
+// here, so Skills opens on its stage.
+
+const blurActive = (page: Page) =>
+  page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+
+// The window that holds keyboard focus, or null.
+const focusedWindowId = (page: Page) =>
+  page.evaluate(
+    () =>
+      document.activeElement
+        ?.closest("[data-window-id]")
+        ?.getAttribute("data-window-id") ?? null,
+  );
+
+/** A CSS selector, or an accessible name (the `aria-label`, else the text). */
+type Match = string | { name: string };
+
+/**
+ * Presses `key` until the focused element matches, at most `max` times, and
+ * gives the number of presses. It fails with the count and the focused
+ * element, cut to 120 characters, so a journey that took a wrong turn shows
+ * where it stopped. It reads the page, not a locator: a locator waits for an
+ * element that may not exist yet.
+ */
+async function pressUntil(page: Page, key: string, match: Match, max: number) {
+  for (let presses = 1; presses <= max; presses++) {
+    await page.keyboard.press(key);
+    const hit = await page.evaluate((m) => {
+      const el = document.activeElement;
+      if (!el) return false;
+      return typeof m === "string"
+        ? el.matches(m)
+        : (el.getAttribute("aria-label") ?? el.textContent?.trim()) === m.name;
+    }, match);
+    if (hit) return presses;
+  }
+  const active = await page.evaluate(
+    () => document.activeElement?.outerHTML.slice(0, 120) ?? "nothing",
+  );
+  throw new Error(
+    `${key} x${max} did not reach ${JSON.stringify(match)}; focus is on ${active}`,
+  );
+}
+
+test("keyboard only: the App Grid, Skills, and closing", async ({ page }) => {
+  await openDesktop(page);
+  await blurActive(page);
+
+  await page.keyboard.press("Tab");
+  await expect(
+    page.getByRole("button", { name: "Activities", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("searchbox", { name: "Search apps" }),
+  ).toBeFocused();
+
+  // The grid launches Skills, and focus goes into it, not back to Activities.
+  await page.keyboard.type("ski");
+  await page.keyboard.press("Enter");
+  await expect(frame(page, "skills")).toBeVisible({ timeout: 15_000 });
+  await expect.poll(() => focusedWindowId(page)).toBe("skills");
+
+  // Tab to an icon, which has the stage's one Tab stop. Enter opens its panel,
+  // and Escape closes it with focus back on the icon.
+  await expect(page.locator("[data-skill-id]").first()).toBeVisible();
+  await pressUntil(page, "Tab", "[data-skill-id]", 40);
+  const id = await page.evaluate(
+    () => document.activeElement?.getAttribute("data-skill-id") ?? "",
+  );
+  expect(id).not.toBe("");
+  await page.keyboard.press("Enter");
+  await expect(page.locator("[data-skill-panel]")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator("[data-skill-panel]")).toHaveCount(0);
+  await expect(page.locator(`[data-skill-id="${id}"]`)).toBeFocused();
+
+  // "List view" is the control just before the stage, so Shift+Tab reaches it
+  // at once. Tab forward would go round the whole desktop first.
+  await pressUntil(page, "Shift+Tab", { name: "List view" }, 5);
+  await expect(
+    frame(page, "skills").getByRole("button", { name: "List view" }),
+  ).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("[data-skill-card]").first()).toBeVisible();
+  await expect(page.locator("[data-skill-id]")).toHaveCount(0);
+
+  // Alt+F4 closes the focused window, and focus lands on its dock icon.
+  await page.keyboard.press("Alt+F4");
+  await expect(frame(page, "skills")).toHaveCount(0);
+  await expect(dockIcon(page, "skills")).toBeFocused();
+});
+
+test("keyboard only: the dock, Projects, Play and Alt+Tab", async ({
+  page,
+}) => {
+  await openDesktop(page);
+  await blurActive(page);
+
+  await pressUntil(page, "Tab", '[data-dock-app="projects"]', 20);
+  await page.keyboard.press("Enter");
+  await expect(frame(page, "projects")).toBeVisible({ timeout: 15_000 });
+  await expect.poll(() => focusedWindowId(page)).toBe("projects");
+
+  // The ring: its front item is the one Tab stop, and ArrowRight turns it.
+  await expect(page.locator("[data-entry-id]").first()).toBeVisible();
+  await pressUntil(page, "Tab", "[data-carousel] [data-front]", 20);
+  const index = page.locator("[data-carousel-index]");
+  const before = await index.textContent();
+  await page.keyboard.press("ArrowRight");
+  await expect.poll(() => index.textContent()).not.toBe(before);
+
+  // Only an entry with a video has Play, and the first Featured ones have none.
+  // Focus follows the arrow key to the item it sends the ring to.
+  const deadknight = page.locator('[data-entry-id="deadknight"]');
+  for (let i = 0; i < 13; i++) {
+    if (await deadknight.evaluate((el) => el === document.activeElement)) break;
+    await page.keyboard.press("ArrowRight");
+  }
+  await expect(deadknight).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("[data-detail-panel]")).toBeVisible();
+
+  // Tab to Play once its answer is in, and Enter opens the demo window.
+  await expect(play(page)).toHaveAttribute("data-media", "ready", {
+    timeout: 15_000,
+  });
+  await pressUntil(page, "Tab", "[data-detail-panel] [data-media]", 30);
+  await page.keyboard.press("Enter");
+  const demo = frame(page, "video-player:deadknight");
+  await expect(demo).toBeVisible({ timeout: 15_000 });
+  await expect
+    .poll(() => focusedWindowId(page))
+    .toBe("video-player:deadknight");
+
+  // Chromium sends the page no keys while focus is inside a video's native
+  // controls (#102), so Alt+Tab below would be lost.
+  expect(
+    await page.evaluate(() => document.activeElement?.tagName),
+    "focus is on the video",
+  ).not.toBe("VIDEO");
+
+  // Alt+Tab goes back to Projects, with focus inside it.
+  await page.keyboard.down("Alt");
+  await page.keyboard.press("Tab");
+  await page.keyboard.up("Alt");
+  await expect(frame(page, "projects")).toHaveAttribute("data-focused", "");
+  await expect.poll(() => focusedWindowId(page)).toBe("projects");
+
+  // Escape closes the panel, and focus is back on the ring's front item.
+  await page.keyboard.press("Escape");
+  await expect(page.locator("[data-detail-panel]")).toHaveCount(0);
+  await expect(page.locator("[data-carousel] [data-front]")).toBeFocused();
+
+  // One video at a time: the host is short on memory. Projects is in front of
+  // the player now, so Close is pressed from the keyboard, not clicked.
+  await demo.getByRole("button", { name: "Close", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await expect(demo).toHaveCount(0);
+});
+
+test("keyboard only: the top bar and the menus", async ({ page }) => {
+  await openDesktop(page);
+  await blurActive(page);
+
+  // The clock opens the calendar, and Escape gives focus back to it.
+  await pressUntil(page, "Tab", "[data-clock]", 5);
+  await page.keyboard.press("Enter");
+  const calendar = page.getByRole("dialog", {
+    name: "Calendar and notifications",
+  });
+  await expect(calendar).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(calendar).toHaveCount(0);
+  await expect(page.locator("[data-clock]")).toBeFocused();
+
+  // The System menu: Enter opens it on its first item, ArrowDown moves on, and
+  // Escape gives focus back. Its name is "System menu, battery 87%".
+  await pressUntil(page, "Tab", '[aria-label^="System menu"]', 5);
+  const systemButton = page.getByRole("button", { name: "System menu" });
+  await expect(systemButton).toBeFocused();
+  await page.keyboard.press("Enter");
+  const system = page.getByRole("dialog", { name: "System menu" });
+  await expect(system).toBeVisible();
+  await expect(
+    system.getByRole("menuitem", { name: "Settings" }),
+  ).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(system.getByRole("menuitem", { name: "Lock" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(system).toHaveCount(0);
+  await expect(systemButton).toBeFocused();
+
+  // A dock icon's menu, which gives focus back to the icon.
+  const contextMenu = page.getByRole("menu", { name: "Context menu" });
+  await pressUntil(page, "Tab", '[data-dock-app="projects"]', 20);
+  await page.keyboard.press("Shift+F10");
+  await expect(contextMenu).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(contextMenu).toHaveCount(0);
+  await expect(dockIcon(page, "projects")).toBeFocused();
+});
+
+// Its own test, so a failure here does not hide the menus above. It is red
+// until #158 is fixed: with nothing focused, Chromium sends the keyboard's
+// `contextmenu` to the element under the viewport's top-left corner (the
+// laptop's desk), and the desktop only opens its menu for the body. The real
+// key is pressed on purpose; a synthetic event at the body would test nothing.
+test("keyboard only: the desktop's own menu", async ({ page }) => {
+  await openDesktop(page);
+  await blurActive(page);
+  const contextMenu = page.getByRole("menu", { name: "Context menu" });
+  await page.keyboard.press("Shift+F10");
+  await expect(contextMenu).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(contextMenu).toHaveCount(0);
 });
