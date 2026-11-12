@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { axeFindings } from "./axe";
 
 test.setTimeout(60_000); // The first request compiles the route.
 
@@ -502,4 +503,64 @@ test("an unknown app id is ignored", async ({ page }) => {
   await expect(page.locator("[data-desktop]")).toBeVisible({ timeout: 15_000 });
   await expect(page.locator("[data-window-id]")).toHaveCount(0);
   // The afterEach fails the test on any console error.
+});
+
+// The portal layer is hidden while it is empty (#156). An empty, visible layer
+// covers the screen after every window, so axe's color-contrast rule reads it
+// as overlapping the text under it and reports `incomplete` (bgOverlap), which
+// is neither a pass nor a fail. The layer keeps its box, because
+// ContextMenuHost, Desktop's Shift+F10 fallback and usePlacement measure it.
+// Reduced motion, so the window is not caught mid-fade; 1440x900 is scale 1,
+// as axe.ts requires.
+test.describe("the screen portal (#156)", () => {
+  test.use({ reducedMotion: "reduce" });
+
+  test("the empty portal is invisible and keeps the screen's box", async ({
+    page,
+  }) => {
+    await open(page, 1440, 900, 1, "/e2e-apps/");
+    const portal = page.locator("[data-screen-portal]");
+    await expect(portal).toHaveCSS("visibility", "hidden");
+    // evaluate, not rect(): boundingBox() is null for a hidden element.
+    expect(
+      await portal.evaluate((el: HTMLElement) => [
+        el.offsetWidth,
+        el.offsetHeight,
+      ]),
+    ).toEqual([1440, 900]);
+
+    // A child makes it visible, and the child with it.
+    await portal.evaluate((el: HTMLElement) => {
+      const probe = document.createElement("div");
+      probe.dataset.testid = "portal-probe";
+      probe.style.cssText =
+        "position:absolute;left:10px;top:10px;width:20px;height:20px";
+      probe.textContent = "probe";
+      el.append(probe);
+    });
+    await expect(portal).toHaveCSS("visibility", "visible");
+    await expect(page.getByTestId("portal-probe")).toBeVisible();
+
+    await portal.evaluate((el: HTMLElement) => {
+      el.querySelector("[data-testid=portal-probe]")?.remove();
+    });
+    await expect(portal).toHaveCSS("visibility", "hidden");
+  });
+
+  test("axe measures the text of a window under the portal", async ({
+    page,
+  }) => {
+    await open(page, 1440, 900, 1, "/e2e-apps/");
+    await page.getByRole("button", { name: "Open Hello" }).click();
+    await expect(
+      frame(page, "hello").getByRole("heading", { name: /Hello/ }),
+    ).toBeVisible();
+    await expect(surface(page, "hello")).toHaveCSS("opacity", "1");
+
+    const report = await axeFindings(page, {
+      include: ['[data-window-id="hello"]'],
+    });
+    expect(report.passes).toContain("color-contrast");
+    expect(report.findings).toEqual([]);
+  });
 });
