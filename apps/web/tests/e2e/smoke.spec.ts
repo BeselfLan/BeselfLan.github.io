@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 test("the composed page renders with tokens and fonts, no console errors", async ({
   page,
@@ -66,4 +66,87 @@ test("CSS Modules are scoped, and Tailwind still compiles", async ({
   await expect(tailwindProbe).toHaveCSS("color", "rgb(233, 84, 32)");
 
   expect(errors).toEqual([]);
+});
+
+// Playwright's touchscreen only taps, so send the touch events directly. Copied
+// from touchDrag in window.spec.ts: specs share no helpers, and one importing
+// another is fragile.
+async function touchSwipe(
+  page: Page,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+) {
+  const cdp = await page.context().newCDPSession(page);
+  const send = (
+    type: "touchStart" | "touchMove" | "touchEnd",
+    x: number,
+    y: number,
+  ) =>
+    cdp.send("Input.dispatchTouchEvent", {
+      type,
+      touchPoints: type === "touchEnd" ? [] : [{ x, y }],
+    });
+  await send("touchStart", from.x, from.y);
+  for (let i = 1; i <= 6; i++) {
+    await send(
+      "touchMove",
+      from.x + ((to.x - from.x) * i) / 6,
+      from.y + ((to.y - from.y) * i) / 6,
+    );
+  }
+  await send("touchEnd", to.x, to.y);
+  await cdp.detach();
+}
+
+// Android Chrome has no pull-to-refresh to give, which would reload the page
+// and reboot the OS, and iOS has no bounce, because the page never scrolls.
+test.describe("phone", () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
+
+  test("a phone page never scrolls", async ({ page }) => {
+    const errors: string[] = [];
+    page.on("console", (msg) => {
+      if (msg.type() === "error") errors.push(msg.text());
+    });
+    page.on("pageerror", (err) => errors.push(err.message));
+
+    // The welcome toast would sit on the wallpaper the swipe starts on.
+    await page.addInitScript(() =>
+      sessionStorage.setItem("beselfos:welcomed", "1"),
+    );
+    await page.goto("/?boot=skip");
+    await expect(page.locator("[data-desktop]")).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.locator("[data-boot-stage]")).toHaveCount(0);
+
+    // With no rule the computed value is "auto".
+    const overscroll = await page.evaluate(() => ({
+      root: getComputedStyle(document.documentElement).overscrollBehaviorY,
+      body: getComputedStyle(document.body).overscrollBehaviorY,
+    }));
+    expect(overscroll).toEqual({ root: "none", body: "none" });
+
+    const extent = await page.evaluate(() => {
+      const el = document.scrollingElement!;
+      return {
+        scrollHeight: el.scrollHeight,
+        scrollWidth: el.scrollWidth,
+        innerHeight: window.innerHeight,
+        innerWidth: window.innerWidth,
+      };
+    });
+    expect(extent.scrollHeight).toBeLessThanOrEqual(extent.innerHeight);
+    expect(extent.scrollWidth).toBeLessThanOrEqual(extent.innerWidth);
+
+    // Down the wallpaper and back up again.
+    await touchSwipe(page, { x: 195, y: 300 }, { x: 195, y: 700 });
+    await touchSwipe(page, { x: 195, y: 700 }, { x: 195, y: 300 });
+
+    expect(await page.evaluate(() => window.scrollY)).toBe(0);
+    const box = await page.locator("[data-screen-box]").boundingBox();
+    expect(Math.abs(box?.y ?? NaN)).toBeLessThanOrEqual(1);
+
+    expect(errors).toEqual([]);
+  });
 });
