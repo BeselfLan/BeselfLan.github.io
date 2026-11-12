@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { MotionConfig } from "motion/react";
 import type { ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -66,6 +66,15 @@ describe("SkillPanel", () => {
     expect(aside.tagName).toBe("ASIDE");
     expect(aside.id).toBe("panel-1");
     expect(screen.getByRole("complementary", { name: "Python" })).toBe(aside);
+  });
+
+  it("is a container focus can land on, not a Tab stop", () => {
+    const { el } = setup();
+    const { container } = render(el());
+    const aside = container.querySelector<HTMLElement>("[data-skill-panel]")!;
+    expect(aside.getAttribute("tabindex")).toBe("-1");
+    act(() => aside.focus());
+    expect(document.activeElement).toBe(aside);
   });
 
   it("no usage, no section", () => {

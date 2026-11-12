@@ -46,6 +46,11 @@
   box-shadow: var(--os-shadow-popover);
 }
 
+/* The panel is a container focus lands on, not a control, so it draws no ring. */
+.skills-panel:focus {
+  outline: none;
+}
+
 .skills-panel-enter {
   animation: skills-panel-in var(--skills-panel-ms)
     cubic-bezier(0.33, 1, 0.68, 1) both;

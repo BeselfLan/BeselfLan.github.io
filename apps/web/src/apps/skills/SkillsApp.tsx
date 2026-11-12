@@ -1,7 +1,14 @@
 "use client";
 
 import { useReducedMotionConfig } from "motion/react";
-import { useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 import type { AppProps } from "@/os/apps/types";
 import { Button } from "@/os/ui/Button";
 import { Chip } from "@/os/ui/Chip";
@@ -44,6 +51,11 @@ import "./skills.css";
 // focus, and would close the panel while the App Grid's search field has focus.
 // Projects does the same (#117).
 //
+// When a skill opens while focus is outside the app root (a click that did not
+// focus, as in Safari, a deep link, another app, or the window's own title
+// bar), the panel takes focus. Escape then reaches the root, and `close()`
+// returns focus to the opener. Focus already inside the app is never moved.
+//
 // This file reaches the OS through `api` only, never calls `useScreen()`
 // (registry.test.ts renders every app outside a Screen), and never writes its
 // own args, its title or the URL: the URL keeps what the window was opened
@@ -78,6 +90,15 @@ export default function SkillsApp({ args, api }: AppProps<SkillsArgs>) {
   const panelId = useId();
   const labelId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
+  const selectedId = view.selectedId;
+  useEffect(() => {
+    if (selectedId === null) return;
+    const root = rootRef.current;
+    if (!root || root.contains(document.activeElement)) return;
+    root
+      .querySelector<HTMLElement>("[data-skill-panel]")
+      ?.focus({ preventScroll: true });
+  }, [selectedId]);
   // The visitor's choice of view, or null until they press the toggle. Until
   // then the list is the default under reduced motion (6.6).
   const reduced = useReducedMotionConfig() ?? false;
