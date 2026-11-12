@@ -1004,6 +1004,98 @@ describe("SkillsApp", () => {
       expect(document.activeElement).toBe(practice(AGILE));
     });
 
+    // Safari does not focus a button on click, a deep link or another app's
+    // openApp starts with focus elsewhere, and jsdom does not focus on click
+    // either: so a test that clicks starts with focus on the body.
+    describe("focus (#148)", () => {
+      const toggle = () => screen.getByRole("button", { name: "List view" });
+      const card = (id: string) =>
+        document.querySelector<HTMLElement>(`[data-skill-card="${id}"]`)!;
+
+      it("a selection with focus outside the app focuses the panel", () => {
+        const { api } = makeApi();
+        const { container } = render(ui(api));
+        fireEvent.click(toggle());
+        expect(document.activeElement).toBe(document.body);
+
+        fireEvent.click(card("java"));
+        expect(document.activeElement).toBe(panel(container));
+
+        // Escape from the panel reaches the root, and focus goes to the card.
+        expect(escape(document.activeElement!)).toBe(false);
+        expect(panel(container)).toBeNull();
+        expect(document.activeElement).toBe(card("java"));
+      });
+
+      it("the same for a practice chip", () => {
+        const { api } = makeApi();
+        const { container } = render(ui(api));
+        expect(document.activeElement).toBe(document.body);
+
+        fireEvent.click(practice(AGILE));
+        expect(document.activeElement).toBe(panel(container));
+
+        expect(escape(document.activeElement!)).toBe(false);
+        expect(panel(container)).toBeNull();
+        expect(document.activeElement).toBe(practice(AGILE));
+      });
+
+      it("a selection from inside the app keeps focus", () => {
+        const { api } = makeApi();
+        const { container } = render(ui(api));
+
+        // The stage: an icon with focus stays focused after its click.
+        focus(icon(container, "python"));
+        click(icon(container, "python"));
+        expect(panel(container)).not.toBeNull();
+        expect(document.activeElement).toBe(icon(container, "python"));
+
+        // A practice chip too.
+        focus(practice(AGILE));
+        fireEvent.click(practice(AGILE));
+        expect(panel(container)).not.toBeNull();
+        expect(document.activeElement).toBe(practice(AGILE));
+
+        // The list view: a card with focus stays focused after its click.
+        fireEvent.click(toggle());
+        focus(card("java"));
+        fireEvent.click(card("java"));
+        expect(heading().textContent).toBe("Java");
+        expect(document.activeElement).toBe(card("java"));
+      });
+
+      it("a deep-linked skill starts with focus in the panel", () => {
+        const { api } = makeApi();
+        const { container } = render(ui(api, { item: "python" }));
+        expect(panel(container)).not.toBeNull();
+        expect(document.activeElement).toBe(panel(container));
+      });
+
+      it("opens nothing and moves no focus while no skill is selected", () => {
+        const { api } = makeApi();
+        const { container } = render(ui(api));
+        expect(panel(container)).toBeNull();
+        expect(document.activeElement).toBe(document.body);
+      });
+
+      it("focus in the window's title bar is outside the app", () => {
+        // What the window frame holds around the app: a title bar button with
+        // focus (#146 puts it there on open) is not inside the app's root.
+        const { api } = makeApi();
+        const { container } = render(
+          <div data-window-id="skills">
+            <button type="button">Minimise</button>
+            <div data-window-content="">{ui(api)}</div>
+          </div>,
+        );
+        focus(screen.getByRole("button", { name: "Minimise" }));
+        expect(document.activeElement?.textContent).toBe("Minimise");
+
+        click(icon(container, "python"));
+        expect(document.activeElement).toBe(panel(container));
+      });
+    });
+
     describe("the list view", () => {
       const toggle = () => screen.getByRole("button", { name: "List view" });
       const stage = (c: HTMLElement) => c.querySelector("[data-skills-stage]");

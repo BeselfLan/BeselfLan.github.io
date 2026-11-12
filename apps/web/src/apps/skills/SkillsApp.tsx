@@ -1,7 +1,14 @@
 "use client";
 
 import { useReducedMotionConfig } from "motion/react";
-import { useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 import type { AppProps } from "@/os/apps/types";
 import { Button } from "@/os/ui/Button";
 import { Chip } from "@/os/ui/Chip";
@@ -44,6 +51,11 @@ import "./skills.css";
 // focus, and would close the panel while the App Grid's search field has focus.
 // Projects does the same (#117).
 //
+// When a skill opens while focus is outside the app root (a click that did not
+// focus, as in Safari, a deep link, another app, or the window's own title
+// bar), the panel takes focus. Escape then reaches the root, and `close()`
+// returns focus to the opener. Focus already inside the app is never moved.
+//
 // This file reaches the OS through `api` only, never calls `useScreen()`
 // (registry.test.ts renders every app outside a Screen), and never writes its
 // own args, its title or the URL: the URL keeps what the window was opened
@@ -78,6 +90,15 @@ export default function SkillsApp({ args, api }: AppProps<SkillsArgs>) {
   const panelId = useId();
   const labelId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
+  const selectedId = view.selectedId;
+  useEffect(() => {
+    if (selectedId === null) return;
+    const root = rootRef.current;
+    if (!root || root.contains(document.activeElement)) return;
+    root
+      .querySelector<HTMLElement>("[data-skill-panel]")
+      ?.focus({ preventScroll: true });
+  }, [selectedId]);
   // The visitor's choice of view, or null until they press the toggle. Until
   // then the list is the default under reduced motion (6.6).
   const reduced = useReducedMotionConfig() ?? false;
@@ -152,10 +173,18 @@ export default function SkillsApp({ args, api }: AppProps<SkillsArgs>) {
         style={{ height: TOOLBAR_HEIGHT }}
         className="flex shrink-0 items-center gap-3 border-b border-white/10 px-4"
       >
-        <div role="group" aria-label="Category" className="flex gap-2">
+        {/* In a narrow window the tabs scroll sideways, so "List view" stays
+            inside it; p-1 keeps room for the chips' focus ring, which a scroll
+            container would clip. */}
+        <div
+          role="group"
+          aria-label="Category"
+          className="flex min-w-0 gap-2 overflow-x-auto p-1"
+        >
           {TABS.map((t) => (
             <Chip
               key={t.id}
+              className="shrink-0"
               selected={view.tab === t.id}
               onClick={() => choose(t.id)}
             >
@@ -165,7 +194,7 @@ export default function SkillsApp({ args, api }: AppProps<SkillsArgs>) {
         </div>
         <Button
           variant="ghost"
-          className="ml-auto"
+          className="ml-auto shrink-0"
           aria-pressed={list}
           onClick={() => setListChoice(!list)}
         >
@@ -211,13 +240,13 @@ export default function SkillsApp({ args, api }: AppProps<SkillsArgs>) {
           role="group"
           aria-labelledby={labelId}
           style={{ height: FOOTER_HEIGHT }}
-          className="flex shrink-0 items-center gap-2 border-t border-white/10 px-4"
+          className="flex shrink-0 items-center gap-2 overflow-x-auto border-t border-white/10 px-4"
         >
-          <span id={labelId} className="text-xs opacity-70">
+          <span id={labelId} className="shrink-0 text-xs opacity-70">
             Practices
           </span>
           {practices.map((p) => (
-            <span key={p.id} data-practice={p.id}>
+            <span key={p.id} data-practice={p.id} className="shrink-0">
               <Chip
                 selected={view.selectedId === p.id}
                 onClick={() => pressPractice(p.id)}

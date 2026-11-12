@@ -26,9 +26,10 @@ import { CATEGORY_LABEL } from "./tabs";
 // and no effect, and the stage's wall slides with it (stageLoop.ts). Under
 // reduced motion it arrives at once. The panel has no key handling of its own:
 // Escape closes it from SkillsApp's root element, which hears the key only
-// while DOM focus is inside the app. It uses neither `useScreen()` nor the
-// Tooltip: both throw outside a Screen, where registry.test.ts renders every
-// app.
+// while DOM focus is inside the app. The aside can hold focus, which SkillsApp
+// hands it when a skill opens from outside the app (`tabIndex` -1, so it is
+// not a Tab stop). It uses neither `useScreen()` nor the Tooltip: both throw
+// outside a Screen, where registry.test.ts renders every app.
 
 export interface SkillPanelProps {
   /** The id that the opener's `aria-controls` names. */
@@ -68,6 +69,7 @@ export function SkillPanel({
       id={id}
       data-skill-panel=""
       aria-labelledby={headingId}
+      tabIndex={-1}
       className={reduced ? "skills-panel" : "skills-panel skills-panel-enter"}
       style={
         {
