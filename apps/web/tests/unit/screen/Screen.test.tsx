@@ -259,6 +259,47 @@ describe("portal", () => {
     expect(document.body.querySelector(":scope > [data-testid=p]")).toBeNull();
   });
 
+  it("the portal is hidden only while it is empty", () => {
+    function Toggled({ on }: { on: boolean }) {
+      const { portalTarget } = useScreen();
+      return on && portalTarget
+        ? createPortal(<span data-testid="p" />, portalTarget)
+        : null;
+    }
+    const tree = (on: boolean) => (
+      <Screen>
+        <Toggled on={on} />
+      </Screen>
+    );
+    const { rerender } = render(tree(false));
+    const portal = document.querySelector<HTMLElement>("[data-screen-portal]")!;
+
+    // Empty: hidden by `empty:invisible`, with the box and the pointer
+    // behaviour it always had. jsdom loads no Tailwind CSS, so this pins the
+    // class contract; window.spec.ts pins the computed style.
+    expect(portal.matches(":empty")).toBe(true);
+    for (const kept of [
+      "empty:invisible",
+      "absolute",
+      "inset-0",
+      "pointer-events-none",
+    ]) {
+      expect(portal.classList.contains(kept)).toBe(true);
+    }
+    for (const wrong of ["invisible", "hidden", "empty:hidden"]) {
+      expect(portal.classList.contains(wrong)).toBe(false);
+    }
+
+    // A child is portaled in: the layer is no longer empty, so the variant
+    // stops applying, and the child is the one that was rendered.
+    rerender(tree(true));
+    expect(portal.matches(":empty")).toBe(false);
+    expect(portal.querySelector("[data-testid=p]")).not.toBeNull();
+
+    rerender(tree(false));
+    expect(portal.matches(":empty")).toBe(true);
+  });
+
   it("the portal comes after the content", () => {
     render(
       <Screen>

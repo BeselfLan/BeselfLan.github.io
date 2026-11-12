@@ -31,7 +31,10 @@ export interface ScreenValue {
   workArea: WorkArea;
   /** Client coordinates to screen coordinates. Needs a resting (untransformed) box. */
   toScreenPoint(clientX: number, clientY: number): Point;
-  /** Inside the scaled box; null on the server and before mount. */
+  /**
+   * Inside the scaled box; null on the server and before mount. Hidden while
+   * empty, but always the size of the screen box.
+   */
   portalTarget: HTMLElement | null;
 }
 
@@ -156,10 +159,14 @@ export function Screen({ children }: { children: ReactNode }) {
       >
         <ScreenContext value={value}>
           <div className="absolute inset-0 isolate">{children}</div>
+          {/* Hidden only while empty, so an empty layer never overlaps the text
+              under it for axe's colour-contrast rule (#156). It keeps its box:
+              ContextMenuHost, Desktop's Shift+F10 fallback and usePlacement
+              measure it, so it must not become display: none or contents. */}
           <div
             ref={setPortalTarget}
             data-screen-portal=""
-            className="pointer-events-none absolute inset-0"
+            className="pointer-events-none absolute inset-0 empty:invisible"
           />
         </ScreenContext>
       </div>
