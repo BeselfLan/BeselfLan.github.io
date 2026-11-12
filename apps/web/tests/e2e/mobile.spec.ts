@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expectNoSeriousAxe } from "./axe";
 
 // The phone, 390x844 (#24, #149; plan 8.1, D4): no bezel, the dock at the
 // bottom, every window maximised, no page scroll, nothing cut off, a ring and a
@@ -491,4 +492,36 @@ test("nothing is cut off at 390", async ({ page }) => {
     .getByRole("button", { name: "Close", exact: true })
     .tap();
   await expect(frame(page, demo)).toHaveCount(0);
+});
+
+// axe over the whole page at 390x844, which no sibling scanned: the page-level
+// rules, and the phone's own layout (fullscreen mode, the maximised windows and
+// the dock at the bottom). Reduced motion, so nothing is caught mid-fade; the
+// colours are the same either way.
+test.describe("the phone passes axe", () => {
+  test.use({ reducedMotion: "reduce" });
+
+  test("the desktop, Projects with a panel, and Skills with a panel", async ({
+    page,
+  }) => {
+    await openPhone(page);
+    await expectNoSeriousAxe(page, "phone desktop");
+
+    await page.goto("/?app=projects&item=deadknight");
+    await expect(
+      page
+        .locator("[data-detail-panel]")
+        .getByRole("button", { name: "Play demo", exact: true }),
+    ).toHaveAttribute("data-media", "ready", { timeout: 15_000 });
+    await settled(page, "projects");
+    await expectNoSeriousAxe(page, "phone Projects with deadknight's panel");
+
+    // Under reduced motion this is the list, with the panel over it.
+    await page.goto("/?app=skills&item=python");
+    await expect(page.locator("[data-skill-panel]")).toBeVisible({
+      timeout: 15_000,
+    });
+    await settled(page, "skills");
+    await expectNoSeriousAxe(page, "phone Skills with Python's panel");
+  });
 });
