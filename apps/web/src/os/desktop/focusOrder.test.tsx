@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Screen } from "@/os/screen/Screen";
@@ -165,6 +165,8 @@ describe("useFocusOrder", () => {
   it("from nothing, Tab starts at the top bar, and Shift+Tab at the last control", () => {
     mount();
     open("a", "b");
+    // Opening B moved focus into it: back to the body, for "from nothing".
+    blurAll();
     act(() => void os.notifications.push({ title: "Heads up" }));
     expect(document.querySelector("[data-toast]")).not.toBeNull();
     expect(document.activeElement).toBe(document.body);
@@ -184,6 +186,7 @@ describe("useFocusOrder", () => {
   it("walks the top bar, the dock, then the windows by z", () => {
     mount();
     open("a", "b");
+    blurAll();
     expect(focusedWindow(useOS.getState())?.id).toBe("b");
 
     // The first Tab lands on Activities; the walk ends when it comes back.
@@ -197,6 +200,7 @@ describe("useFocusOrder", () => {
   it("walks backwards from the last control, window by window", () => {
     mount();
     open("a", "b");
+    blurAll();
     const groups: string[] = [];
     for (let i = 0; i < 60; i++) {
       shiftTab();
@@ -507,6 +511,167 @@ describe("useFocusOrder", () => {
     expect(document.activeElement).toBe(document.body);
     const event = tab();
     expect(event.defaultPrevented).toBe(false);
+  });
+});
+
+describe("useFocusFollowsWindow", () => {
+  // jsdom focuses what it is told to and nothing else, so every move here is the
+  // hook's. A closed window's frame stays in the DOM, inert, while it exits
+  // (stubFrames holds motion's frames), and jsdom leaves focus inside it.
+  const close = (id: string) => act(() => void os.windows.closeWindow(id));
+  const dockIcon = (id: string) =>
+    document.querySelector(`[data-dock-app="${id}"]`);
+
+  it("a new window takes focus", () => {
+    mount();
+    expect(document.activeElement).toBe(document.body);
+    open("a");
+    expect(groupOf(document.activeElement)).toBe("a");
+  });
+
+  it("opening over a window moves focus to the new one", () => {
+    mount();
+    open("a");
+    focusButton("a-1");
+    open("b");
+    expect(groupOf(document.activeElement)).toBe("b");
+  });
+
+  it("a press inside a window leaves focus alone", () => {
+    mount();
+    open("b", "a");
+    const first = focusButton("a-1");
+    expect(focusedWindow(useOS.getState())?.id).toBe("a");
+
+    // A press on the content of B, not on a button.
+    const inside = document.querySelector(
+      '[data-window-id="b"] [data-window-content] div',
+    )!;
+    expect(inside.closest("button")).toBeNull();
+    fireEvent.pointerDown(inside);
+    expect(focusedWindow(useOS.getState())?.id).toBe("b");
+    expect(document.activeElement).toBe(first);
+  });
+
+  it("a restore takes focus", () => {
+    mount();
+    open("a");
+    const bar = focusButton("Activities");
+    act(() => os.windows.minimizeWindow("a"));
+    expect(document.activeElement).toBe(bar);
+
+    act(() => os.windows.restoreWindow("a"));
+    expect(groupOf(document.activeElement)).toBe("a");
+  });
+
+  it("closing the focused window hands focus to the next", () => {
+    mount();
+    open("a", "b");
+    focusButton("b-1");
+    close("b");
+    expect(focusedWindow(useOS.getState())?.id).toBe("a");
+    expect(groupOf(document.activeElement)).toBe("a");
+  });
+
+  it("minimising from outside the windows leaves focus there", () => {
+    mount();
+    open("a", "b");
+    const bar = focusButton("Activities");
+    act(() => os.windows.minimizeWindow("b"));
+    expect(focusedWindow(useOS.getState())?.id).toBe("a");
+    expect(document.activeElement).toBe(bar);
+  });
+
+  it("minimising the window that holds focus hands it to the next", () => {
+    mount();
+    open("a", "b");
+    focusButton("b-1");
+    act(() => os.windows.minimizeWindow("b"));
+    expect(groupOf(document.activeElement)).toBe("a");
+  });
+
+  it("the last window hands focus to its dock icon", () => {
+    register({ id: "projects" });
+    mount();
+    open("projects");
+    expect(groupOf(document.activeElement)).toBe("projects");
+
+    close("projects");
+    expect(useOS.getState().windows.items).toHaveLength(0);
+    expect(dockIcon("projects")).not.toBeNull();
+    expect(document.activeElement).toBe(dockIcon("projects"));
+  });
+
+  it("a press that empties the desktop leaves the dock alone", () => {
+    register({ id: "projects" });
+    mount();
+    open("projects");
+    const closeButton = screen.getByRole("button", {
+      name: "Close",
+      hidden: true,
+    });
+    fireEvent.pointerDown(closeButton);
+    close("projects");
+    // The dock's tooltip opens on any focus a press did not give: a click that
+    // closed the last window must not pop it up.
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("a key then a press: the press decides", () => {
+    register({ id: "projects" });
+    mount();
+    open("projects");
+    act(
+      () =>
+        void document.dispatchEvent(new KeyboardEvent("keydown", { key: "a" })),
+    );
+    fireEvent.pointerDown(document.body);
+    close("projects");
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("a press then a key: the key decides, and the dock icon gets focus", () => {
+    register({ id: "projects" });
+    mount();
+    open("projects");
+    fireEvent.pointerDown(document.body);
+    fireEvent.keyDown(document.body, { key: "a" });
+    close("projects");
+    expect(document.activeElement).toBe(dockIcon("projects"));
+  });
+
+  it("a window with no dock icon blurs instead", () => {
+    mount();
+    open("a");
+    focusButton("a-1");
+    close("a");
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("a launch from the App Grid focuses the window", () => {
+    register({ id: "hello" });
+    mount();
+    focusButton("Activities");
+    act(() => os.shell.setActivitiesOpen(true));
+    fireEvent.click(document.querySelector('[data-app-grid-tile="hello"]')!);
+    expect(focusedWindow(useOS.getState())?.id).toBe("hello");
+    expect(groupOf(document.activeElement)).toBe("hello");
+  });
+
+  it("a window open before the desktop mounts gets focus", () => {
+    open("a");
+    mount();
+    expect(groupOf(document.activeElement)).toBe("a");
+  });
+
+  it("leaves a focus that is on the page's own control alone at mount", () => {
+    open("a");
+    const outside = document.createElement("button");
+    document.body.append(outside);
+    outside.focus();
+    mount();
+    expect(document.activeElement).toBe(outside);
+    outside.remove();
   });
 });
 

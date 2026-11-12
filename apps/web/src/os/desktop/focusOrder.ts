@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, type RefObject } from "react";
-import { orderedWindows, os, useOS } from "../store";
+import { useEffect, useRef, type RefObject } from "react";
+import { focusedWindow, orderedWindows, os, useOS } from "../store";
 
 // The keyboard order of the desktop (plan 4.8, #102): Tab walks the top bar,
 // then the dock, then the open windows from the highest z to the lowest, then
@@ -37,6 +37,15 @@ import { orderedWindows, os, useOS } from "../store";
 // <video>, to the next control in the desktop's order. A pointer press or any
 // key the document sees ends `walking`: focus is then not in the controls, or
 // a mouse click, not Tab, is what moves it.
+//
+// Focus also follows the window (useFocusFollowsWindow, #146). When a window
+// becomes the focused one because it was opened, restored or chosen, focus
+// moves into it with focusInto; when the one that held focus closes or is
+// minimised, focus goes to the next window, or to its dock icon when none is
+// left. It never follows a press inside a window, which the browser handles,
+// and it never takes focus from the dock or the top bar. It runs in a passive
+// effect, so the App Grid's and the popovers' "give focus back" cleanups, which
+// React runs first in the same commit, cannot win.
 let order: string[] | null = null;
 let moved: Element | null = null;
 let memory = new WeakMap<Element, HTMLElement>();
@@ -297,8 +306,134 @@ export function focusInto(windowId: string): void {
   }
   if (focusFirst(controlsIn(frame))) return;
 
+  blurStale();
+}
+
+/** Blurs focus that sits inside a window frame, and leaves any other alone. */
+function blurStale(): void {
   const stale = document.activeElement;
   if (stale instanceof HTMLElement && stale.closest("[data-window-id]")) {
     stale.blur();
   }
+}
+
+const isBody = (el: Element | null): boolean =>
+  el === null || el === document.body || el === document.documentElement;
+
+/**
+ * Whether focus is lost: on the page (null, the body or the root), inside an
+ * inert subtree (a closing window's frame is inert while it fades, and a
+ * browser may or may not have moved focus out of it yet), or inside a frame
+ * whose window is no longer open (closed, or minimised).
+ */
+function focusLost(): boolean {
+  const active = document.activeElement;
+  if (isBody(active) || !active) return true;
+  if (active.closest("[inert]")) return true;
+  const frame = active.closest("[data-window-id]");
+  if (!frame) return false;
+  const id = frame.getAttribute("data-window-id");
+  return !useOS
+    .getState()
+    .windows.items.some((w) => w.id === id && w.status === "open");
+}
+
+/**
+ * Keeps keyboard focus with the window the visitor chose (plan 4.8, #146).
+ * Desktop calls it once. When the focused window becomes W:
+ *  1. Focus already inside W's frame: nothing. This comes before focusInto,
+ *     which resets the Tab walk's window snapshot, and the walk would bounce.
+ *     It covers the walk's own raise and Alt+Tab.
+ *  2. W is the window under the last press: nothing. A press inside a window
+ *     leaves focus to the browser.
+ *  3. The previous focused window is still open, or there was none: W was
+ *     chosen (opened, restored, from the dock, the grid, a link, another app or
+ *     Alt+Tab), so focusInto(W).
+ *  4. The previous one is gone (closed or minimised): focusInto(W) only if
+ *     focus is lost with it. Focus on the dock or the bar stays there.
+ * With no window left, focus that is lost goes to the dock icon of the app that
+ * was focused, after a key; after a press it is only blurred, because the
+ * dock's tooltip opens on any focus that is not a press's. On mount, a focused
+ * window (a deep link opened it first) takes focus from the body.
+ *
+ * Refs and focus() only, and a passive effect: see the top of the file.
+ */
+export function useFocusFollowsWindow(): void {
+  const id = useOS((s) => focusedWindow(s)?.id ?? null);
+  // The window under the last press, or null after a key and before any input.
+  const press = useRef<{ windowId: string | null } | null>(null);
+  // The previous focused window and its app, or undefined before the first run.
+  const prev = useRef<{ id: string | null; appId: string | null } | undefined>(
+    undefined,
+  );
+
+  useEffect(() => {
+    // Capture phase on the document: it runs before the frame's own capture
+    // handler raises the window, so the record is ready when the store changes.
+    const onPress = (e: PointerEvent) => {
+      const target = e.target;
+      const frame =
+        target instanceof Element && target.closest("[data-window-id]");
+      press.current = {
+        windowId: frame ? frame.getAttribute("data-window-id") : null,
+      };
+    };
+    const onKey = () => {
+      press.current = null;
+    };
+    document.addEventListener("pointerdown", onPress, true);
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("pointerdown", onPress, true);
+      document.removeEventListener("keydown", onKey, true);
+      press.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const before = prev.current;
+    const win =
+      id === null
+        ? undefined
+        : useOS.getState().windows.items.find((w) => w.id === id);
+    prev.current = { id, appId: win?.appId ?? null };
+
+    // Strict Mode runs the effect twice on mount.
+    if (before !== undefined && before.id === id) return;
+
+    // The mount: a deep link opened its window before the desktop was there.
+    if (before === undefined) {
+      if (id !== null && isBody(document.activeElement)) focusInto(id);
+      return;
+    }
+
+    // No window is left.
+    if (id === null) {
+      if (before.id !== null && focusLost()) {
+        const icon =
+          press.current === null && before.appId !== null
+            ? document.querySelector<HTMLElement>(
+                `[data-dock-app="${before.appId}"]`,
+              )
+            : null;
+        icon?.focus();
+        if (!icon || document.activeElement !== icon) blurStale();
+      }
+      return;
+    }
+
+    // Rule 1, before focusInto: see above.
+    const frame = frameOf(document, id);
+    const active = document.activeElement;
+    if (frame && active && frame.contains(active)) return;
+    // Rule 2.
+    if (press.current?.windowId === id) return;
+    // Rule 3, then rule 4.
+    const previousOpen =
+      before.id === null ||
+      useOS
+        .getState()
+        .windows.items.some((w) => w.id === before.id && w.status === "open");
+    if (previousOpen || focusLost()) focusInto(id);
+  }, [id]);
 }
