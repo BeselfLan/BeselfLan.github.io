@@ -103,6 +103,24 @@ export default function ProjectsApp({ args, api }: AppProps<ProjectsArgs>) {
       ?.focus({ preventScroll: true });
   }
 
+  // Escape is heard on this root, so a panel that opens with focus outside the
+  // app, which no key reaches, would ignore it. That is a Safari click (it does
+  // not focus a button), a deep link, and another app's openApp. So when an
+  // entry opens and focus is not inside the root, the panel takes it. Inside
+  // means the root's own DOM: the window's title bar, where the desktop may put
+  // focus when it opens the window (#146), is outside it. A click or Enter on
+  // the ring in Chromium has focus on the item already, and nothing moves. No
+  // state is set here, and a second run (Strict Mode) finds focus inside.
+  const openEntryId = openEntry?.id;
+  useEffect(() => {
+    if (openEntryId === undefined) return;
+    const root = rootEl.current;
+    if (!root || root.contains(document.activeElement)) return;
+    root
+      .querySelector<HTMLElement>("[data-detail-panel]")
+      ?.focus({ preventScroll: true });
+  }, [openEntryId]);
+
   // Escape is heard on this root, and not through api.registerShortcut: a
   // window's shortcut would take the key before the App Grid could close
   // itself. preventDefault is what keeps the OS's Escape (close all) from

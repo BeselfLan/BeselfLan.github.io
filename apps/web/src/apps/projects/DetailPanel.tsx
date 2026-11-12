@@ -39,7 +39,7 @@ export interface DetailPanelProps {
 
 // Whole literal strings, so Tailwind finds every class.
 const PANEL =
-  "absolute inset-y-0 left-0 z-10 flex max-w-full flex-col border-r border-white/10 bg-os-panel text-os-panel-fg shadow-os-popover";
+  "absolute inset-y-0 left-0 z-10 flex max-w-full flex-col border-r border-white/10 bg-os-panel text-os-panel-fg shadow-os-popover focus:outline-none";
 const GROUP_TITLE = "text-xs font-semibold tracking-wide uppercase opacity-70";
 const LINK =
   "text-os-accent underline underline-offset-2 outline-offset-2 hover:brightness-110 focus-visible:outline-2 focus-visible:outline-os-accent";
@@ -63,6 +63,9 @@ export function DetailPanel({ id, entry, api, onClose }: DetailPanelProps) {
       id={id}
       aria-labelledby={headingId}
       data-detail-panel=""
+      // A container, not a control: ProjectsApp focuses it so that Escape works
+      // when a click did not focus anything. -1 keeps it out of the Tab walk.
+      tabIndex={-1}
       className={PANEL}
       style={{ width: PANEL_WIDTH }}
       initial={reduced ? false : { x: -PANEL_WIDTH }}

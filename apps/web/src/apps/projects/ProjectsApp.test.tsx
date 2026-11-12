@@ -48,8 +48,10 @@ const FIXTURE = {
 };
 
 // A bare vi.fn() would return undefined, which the panel's Play treats as
-// offline, and the offline Play's Tooltip needs a Screen that this file does
-// not render. So by default the media resolves, with a status of "unknown".
+// offline. Play's Tooltip is always there, and outside a Screen it renders only
+// its control and never shows (#145), so this file needs no Screen for it. The
+// default is still that the media resolves, with a status of "unknown", so the
+// panel's Play is the working one.
 function makeApi(
   content: AppApi["content"] = staticContent,
   resolve: () => Promise<typeof FIXTURE | null> = () =>
@@ -560,6 +562,66 @@ describe("ProjectsApp detail panel", () => {
     expect(panel(container)).not.toBeNull();
     expect(fireEvent.keyDown(chip("All"), { key: "Escape" })).toBe(false);
     expect(panel(container)).toBeNull();
+  });
+
+  describe("focus", () => {
+    // jsdom does not focus a button on a click, as Safari does not, so a click
+    // here is a selection with focus wherever it was.
+    it("a selection with focus outside the app focuses the panel", () => {
+      const { api } = makeApi();
+      const { container } = render(ui(api, {}));
+      expect(document.activeElement).toBe(document.body);
+
+      fireEvent.click(item(container, "tetris-asm"));
+      expect(panel(container)).not.toBeNull();
+      expect(document.activeElement).toBe(panel(container));
+
+      // Escape heard on the panel closes it, and the front item gets focus.
+      fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+      expect(panel(container)).toBeNull();
+      expect(document.activeElement).toBe(frontItem(container));
+    });
+
+    it("a selection from inside the app keeps focus", () => {
+      const { api } = makeApi();
+      const { container } = render(ui(api, {}));
+      const front = frontItem(container);
+      act(() => front.focus());
+
+      // What Enter on the item does, and what a Chromium click does after it
+      // focused the item.
+      fireEvent.click(front);
+      expect(panel(container)).not.toBeNull();
+      expect(document.activeElement).toBe(front);
+    });
+
+    it("a deep-linked item starts with focus in the panel", () => {
+      const { api } = makeApi();
+      const { container } = render(ui(api, { item: "deadknight" }));
+      expect(document.activeElement).toBe(panel(container));
+    });
+
+    it("focus in the window's title bar is outside the app", () => {
+      // The desktop may put focus on the title bar's Minimise when it opens
+      // the window (#146). That is not inside the app's own root.
+      const { api } = makeApi();
+      const { container } = render(
+        <div data-window-id="projects">
+          <button>Minimise</button>
+          <div data-window-content="">{ui(api, {})}</div>
+        </div>,
+      );
+      act(() => screen.getByRole("button", { name: "Minimise" }).focus());
+
+      fireEvent.click(item(container, "tetris-asm"));
+      expect(document.activeElement).toBe(panel(container));
+    });
+
+    it("is not a Tab stop", () => {
+      const { api } = makeApi();
+      const { container } = render(ui(api, { item: "deadknight" }));
+      expect(panel(container)?.getAttribute("tabindex")).toBe("-1");
+    });
   });
 
   it("says what the items control", () => {
