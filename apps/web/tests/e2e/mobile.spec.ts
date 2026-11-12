@@ -130,7 +130,7 @@ async function expectMaximised(page: Page, id: string) {
       [box.x, box.y, box.width, box.height].map(Math.round),
       `${id} box ${JSON.stringify(box)}`,
     ).toEqual([0, 32, 390, 748]);
-  }).toPass();
+  }).toPass({ timeout: 10_000 });
   for (const name of ["Maximise", "Restore"]) {
     await expect(win.getByRole("button", { name, exact: true })).toHaveCount(0);
   }
@@ -165,7 +165,7 @@ test("no bezel, and the page never scrolls", async ({ page }) => {
       [box.x, box.y, box.width, box.height].map(Math.round),
       `screen box ${JSON.stringify(box)}`,
     ).toEqual([0, 0, 390, 844]);
-  }).toPass();
+  }).toPass({ timeout: 10_000 });
 
   const extent = await page.evaluate(() => {
     const el = document.scrollingElement!;
@@ -200,7 +200,7 @@ test("the dock is at the bottom, full width", async ({ page }) => {
       `dock bottom ${box.y + box.height}`,
     ).toBe(true);
     expect(near(box.width, 390), `dock width ${box.width}`).toBe(true);
-  }).toPass();
+  }).toPass({ timeout: 10_000 });
 });
 
 test("every window opens maximised", async ({ page }) => {
@@ -234,6 +234,257 @@ test("every window opens maximised", async ({ page }) => {
   await expect(frame(page, demo)).toBeVisible({ timeout: 15_000 });
   await settled(page, demo);
   await expectMaximised(page, demo);
+
+  // One video at a time: the host is short on memory.
+  await frame(page, demo)
+    .getByRole("button", { name: "Close", exact: true })
+    .tap();
+  await expect(frame(page, demo)).toHaveCount(0);
+});
+
+test("the carousel turns under a finger", async ({ page }) => {
+  await openPhone(page, "/?app=projects");
+  await expect(page.locator("[data-entry-id]").first()).toBeVisible({
+    timeout: 15_000,
+  });
+  await settled(page, "projects");
+
+  // Without this the browser takes the drag for a pan or a pull, and cancels
+  // the pointer the ring is following.
+  const stage = page.locator("[data-carousel]");
+  await expect(stage).toHaveCSS("touch-action", "none");
+
+  const index = page.locator("[data-carousel-index]");
+  const before = await index.textContent();
+  await touchDrag(page, stage, -150, 0);
+  await expect(async () => {
+    expect(await index.textContent()).not.toBe(before);
+  }).toPass({ timeout: 10_000 });
+
+  // A tap on the front item opens the panel, and the panel fits the screen.
+  // The tap is a touch at a point measured in the page once the ring has come
+  // to rest, and not `locator.tap()`: Playwright finds the ring's 3D item
+  // "outside of the viewport" though it is in the middle of the screen, and
+  // `elementFromPoint` there is the item itself.
+  await expect(async () => {
+    const rings = await page.evaluate(async () => {
+      const transform = () =>
+        getComputedStyle(document.querySelector("[data-carousel-ring]")!)
+          .transform;
+      const first = transform();
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      return [first, transform()];
+    });
+    expect(rings[0], "the ring is still turning").toBe(rings[1]);
+  }).toPass({ timeout: 10_000 });
+  const front = await page.evaluate(() => {
+    const el = document.querySelector("[data-carousel] [data-front]")!;
+    const box = el.getBoundingClientRect();
+    const x = box.left + box.width / 2;
+    const y = box.top + box.height / 2;
+    return {
+      x,
+      y,
+      hit: document.elementFromPoint(x, y)?.closest("[data-front]") === el,
+    };
+  });
+  expect(front.hit, "the front item is not under its own centre").toBe(true);
+  await page.touchscreen.tap(front.x, front.y);
+  const panel = page.locator("[data-detail-panel]");
+  await expect(panel).toBeVisible();
+  // The panel slides in, so its box is read until it has come to rest.
+  await expect(async () => {
+    const box = await rect(panel);
+    expect(box.x, `panel x ${box.x}`).toBeGreaterThanOrEqual(-1);
+    expect(
+      box.x + box.width,
+      `panel right ${box.x + box.width}`,
+    ).toBeLessThanOrEqual(391);
+    expect(box.width, `panel width ${box.width}`).toBeLessThanOrEqual(391);
+  }).toPass({ timeout: 10_000 });
+});
+
+/**
+ * The centre of a Skills icon in client pixels, measured in the page. It throws,
+ * and is retried, unless the icon is the topmost thing at that point, so a moment
+ * when another icon covers it is skipped. The icons never stop drifting, so
+ * Playwright's "stable" check never passes for them: no test calls
+ * `locator.tap()` on one.
+ */
+async function centreOf(page: Page, id: string) {
+  let point = { x: 0, y: 0 };
+  await expect(async () => {
+    const hit = await page.evaluate((skillId) => {
+      const el = document.querySelector(`[data-skill-id="${skillId}"]`);
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      const x = r.left + r.width / 2;
+      const y = r.top + r.height / 2;
+      const top = document.elementFromPoint(x, y)?.closest("[data-skill-id]");
+      return { x, y, onTop: top === el };
+    }, id);
+    expect(hit?.onTop, `${id} is not on top`).toBe(true);
+    point = { x: hit!.x, y: hit!.y };
+  }).toPass({ timeout: 5000 });
+  return point;
+}
+
+test("a skill follows a finger", async ({ page }) => {
+  // Motion is allowed, so Skills opens on its stage.
+  await openPhone(page, "/?app=skills");
+  const python = page.locator('[data-skill-id="python"]');
+  await expect(python).toBeVisible({ timeout: 15_000 });
+  await settled(page, "skills");
+  const stage = page.locator("[data-skills-stage]");
+  await expect(stage).toHaveCSS("touch-action", "none");
+  await expect(python).toHaveCSS("touch-action", "none");
+
+  // A tap opens the panel, as wide as the stage: it covers the whole stage on a
+  // phone.
+  const tap = await centreOf(page, "python");
+  await page.touchscreen.tap(tap.x, tap.y);
+  const panel = page.locator("[data-skill-panel]");
+  await expect(panel).toBeVisible();
+  expect(
+    near((await rect(panel)).width, (await rect(stage)).width),
+    `panel ${(await rect(panel)).width} wide, stage ${(await rect(stage)).width}`,
+  ).toBe(true);
+  await frame(page, "skills")
+    .getByRole("button", { name: "Close panel" })
+    .tap();
+  await expect(panel).toHaveCount(0);
+
+  // A drag moves the icon with the finger, toward the middle of the stage so a
+  // wall never shortens it. The icons drift by about 20 units a second, so a
+  // changed transform proves little: the distance is what a stage that ignored
+  // the finger would fail.
+  const start = await centreOf(page, "python");
+  const before = await python.evaluate((el) => getComputedStyle(el).transform);
+  const middle = await rect(stage);
+  const dx = start.x < middle.x + middle.width / 2 ? 100 : -100;
+  const dy = start.y < middle.y + middle.height / 2 ? 60 : -60;
+  await touchDragFrom(page, start, dx, dy);
+
+  const end = await centreOf(page, "python");
+  const moved = Math.hypot(end.x - start.x, end.y - start.y);
+  expect(moved, `python moved ${moved} px`).toBeGreaterThan(40);
+  expect(
+    await python.evaluate((el) => getComputedStyle(el).transform),
+  ).not.toBe(before);
+});
+
+test("nothing is cut off at 390", async ({ page }) => {
+  // Every button, link and Tab stop that is shown, outside a ring (which clips
+  // on purpose) and outside a scroller (which is meant to scroll), lies inside
+  // the window's box.
+  async function expectNothingCut(id: string) {
+    await settled(page, id);
+    const { checked, cut } = await frame(page, id).evaluate((root) => {
+      const bounds = root.getBoundingClientRect();
+      const scrolls = (el: Element) => {
+        const css = getComputedStyle(el);
+        return /auto|scroll/.test(css.overflowX + css.overflowY);
+      };
+      let checked = 0;
+      const cut: string[] = [];
+      for (const el of root.querySelectorAll<HTMLElement>(
+        'button, a[href], [tabindex="0"]',
+      )) {
+        const box = el.getBoundingClientRect();
+        if (box.width <= 0 || box.height <= 0) continue;
+        if (getComputedStyle(el).visibility === "hidden") continue;
+        if (el.closest("[data-carousel]")) continue;
+        let inScroller = false;
+        for (
+          let up = el.parentElement;
+          up && up !== root;
+          up = up.parentElement
+        ) {
+          if (scrolls(up)) inScroller = true;
+        }
+        if (inScroller) continue;
+        checked += 1;
+        if (
+          box.left < bounds.left - 1 ||
+          box.top < bounds.top - 1 ||
+          box.right > bounds.right + 1 ||
+          box.bottom > bounds.bottom + 1
+        ) {
+          cut.push(
+            el.getAttribute("aria-label") ??
+              (el.textContent ?? "").trim().slice(0, 40),
+          );
+        }
+      }
+      return { checked, cut };
+    });
+    expect(checked, `${id} has controls to check`).toBeGreaterThanOrEqual(2);
+    expect(cut, `${id} has controls outside its box`).toEqual([]);
+  }
+
+  await openPhone(page, "/?app=projects");
+  await expect(page.locator("[data-entry-id]").first()).toBeVisible({
+    timeout: 15_000,
+  });
+  await expectNothingCut("projects");
+
+  await page.goto("/?app=skills");
+  await expect(page.locator("[data-skill-id]").first()).toBeVisible({
+    timeout: 15_000,
+  });
+  await expectNothingCut("skills");
+
+  // "List view" is on one line, and inside its row: without `shrink-0` a narrow
+  // toolbar squeezes it to two lines that are taller than the row.
+  const listView = frame(page, "skills").getByRole("button", {
+    name: "List view",
+    exact: true,
+  });
+  const fit = await listView.evaluate((el) => {
+    const box = el.getBoundingClientRect();
+    const row = (el.parentElement as HTMLElement).getBoundingClientRect();
+    const text = document.createRange();
+    text.selectNodeContents(el);
+    return {
+      aboveRow: row.top - box.top,
+      belowRow: box.bottom - row.bottom,
+      lines: text.getClientRects().length,
+    };
+  });
+  expect(fit.aboveRow, "List view pokes out above its row").toBeLessThanOrEqual(
+    1,
+  );
+  expect(fit.belowRow, "List view pokes out below its row").toBeLessThanOrEqual(
+    1,
+  );
+  expect(fit.lines, "List view wraps onto more than one line").toBe(1);
+
+  await page.goto("/?app=about");
+  await expect(page.locator("[data-about]")).toBeVisible({ timeout: 15_000 });
+  await expectNothingCut("about");
+
+  await page.goto("/?app=hello");
+  await expect(
+    frame(page, "hello").getByRole("heading", { name: "Hello, world" }),
+  ).toBeVisible({ timeout: 15_000 });
+  await expectNothingCut("hello");
+
+  await page.goto("/?app=projects&item=deadknight");
+  const play = page
+    .locator("[data-detail-panel]")
+    .getByRole("button", { name: "Play demo", exact: true });
+  await expect(play).toHaveAttribute("data-media", "ready", {
+    timeout: 15_000,
+  });
+  await expectNothingCut("projects");
+
+  await play.tap();
+  const demo = "video-player:deadknight";
+  await expect(
+    frame(page, demo).locator('[data-video-state="ready"]'),
+  ).toBeVisible({ timeout: 15_000 });
+  await expectNothingCut(demo);
 
   // One video at a time: the host is short on memory.
   await frame(page, demo)
