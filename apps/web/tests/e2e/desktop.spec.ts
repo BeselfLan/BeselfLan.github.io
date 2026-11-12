@@ -938,4 +938,58 @@ test.describe("the keyboard", () => {
     await page.keyboard.press("Enter");
     await expect(demo).toHaveCount(0);
   });
+
+  // Focus follows the window (#146): opening, restoring or choosing a window
+  // puts keyboard focus inside it, and closing the one that has it hands focus
+  // on.
+
+  test("Enter on a dock icon puts focus in the new window", async ({
+    page,
+  }) => {
+    await openDesktop(page);
+    await blurActive(page);
+
+    const projects = dockIcon(page, "projects");
+    for (let i = 0; i < 20; i++) {
+      await page.keyboard.press("Tab");
+      if (await isFocused(projects)) break;
+    }
+    await expect(projects).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(frame(page, "projects")).toBeVisible({ timeout: 15_000 });
+    // Not left on the dock icon, which a desktop without the hook would do.
+    await expect.poll(() => focusedWindowId(page)).toBe("projects");
+  });
+
+  test("a launch from the App Grid focuses the window", async ({ page }) => {
+    await openDesktop(page);
+    await page.getByRole("button", { name: "Activities" }).click();
+    await expect(
+      page.getByRole("searchbox", { name: "Search apps" }),
+    ).toBeFocused();
+    await page.keyboard.type("about");
+    await page.keyboard.press("Enter");
+    await expect(frame(page, "about")).toBeVisible({ timeout: 15_000 });
+    // The grid gives focus back to Activities as it closes; the window wins.
+    await expect.poll(() => focusedWindowId(page)).toBe("about");
+  });
+
+  test("a deep link starts with focus in its window", async ({ page }) => {
+    await openDesktop(page, { path: "/?app=about" });
+    await expect(frame(page, "about")).toBeVisible({ timeout: 15_000 });
+    await expect.poll(() => focusedWindowId(page)).toBe("about");
+  });
+
+  test("Close hands focus to the window below", async ({ page }) => {
+    await openDesktop(page, { path: "/?app=hello" });
+    await expect(frame(page, "hello")).toBeVisible({ timeout: 15_000 });
+    await dockIcon(page, "about").click();
+    await expect(frame(page, "about")).toHaveAttribute("data-focused", "");
+
+    await frame(page, "about")
+      .getByRole("button", { name: "Close", exact: true })
+      .click();
+    await expect(frame(page, "about")).toHaveCount(0);
+    await expect.poll(() => focusedWindowId(page)).toBe("hello");
+  });
 });
