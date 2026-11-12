@@ -1,5 +1,6 @@
 import { content } from "@beself/content";
 import { expect, test, type Page } from "@playwright/test";
+import { expectNoSeriousAxe } from "./axe";
 
 // The Skills window in Chromium: the tabs, the floating emblems, a drag, a
 // click and the keyboard (#89), then the detail panel with its wall, the
@@ -491,6 +492,63 @@ test.describe("a phone", () => {
       await chip(page, "Tools").click();
       await expect(cards).toHaveCount(17);
       await expect(chip(page, "Tools")).toHaveAttribute("aria-pressed", "true");
+    });
+  });
+});
+
+// Skills under axe (#148), one scan for each state: the list view, the stage,
+// and the stage with Python's panel. Each is limited to the Skills window.
+// Reduced motion, so the icons' fade and the panel's slide are skipped: axe
+// reads a fading element at its current opacity, and the colours are the same
+// either way. Under reduced motion Skills opens in list view (6.6), so the stage
+// is reached through the toggle, and `openSkills` (which waits for an icon) is
+// not used. The window's own fade still plays, so each scan waits it out.
+// 1440x900 is scale 1, so the laptop's CSS scale shrinks nothing.
+test.describe("axe", () => {
+  test.use({ reducedMotion: "reduce" });
+  test.setTimeout(90_000);
+
+  const SKILLS = { include: ['[data-window-id="skills"]'] };
+  const toggle = (page: Page) =>
+    win(page).getByRole("button", { name: "List view" });
+  const faded = (page: Page) =>
+    expect(win(page).locator(":scope > div")).toHaveCSS("opacity", "1");
+
+  test("Skills passes axe", async ({ page }) => {
+    await test.step("skills list view", async () => {
+      await page.goto("/?app=skills");
+      await expect(win(page)).toBeVisible({ timeout: 15_000 });
+      await expect(toggle(page)).toHaveAttribute("aria-pressed", "true");
+      await expect(
+        win(page).locator("[data-skill-card]").first(),
+      ).toBeVisible();
+      await faded(page);
+      await expectNoSeriousAxe(page, "skills list view", SKILLS);
+    });
+
+    await test.step("skills stage", async () => {
+      await toggle(page).click();
+      await expect(toggle(page)).toHaveAttribute("aria-pressed", "false");
+      await icons(page).first().waitFor();
+      await faded(page);
+      await expectNoSeriousAxe(page, "skills stage", SKILLS);
+    });
+
+    await test.step("skills stage with the Python panel", async () => {
+      await page.goto("/?app=skills&item=python");
+      await expect(win(page)).toBeVisible({ timeout: 15_000 });
+      await toggle(page).click();
+      await expect(toggle(page)).toHaveAttribute("aria-pressed", "false");
+      await expect(
+        panel(page).getByRole("heading", { level: 3, name: "Python" }),
+      ).toBeVisible();
+      await icons(page).first().waitFor();
+      await faded(page);
+      await expectNoSeriousAxe(
+        page,
+        "skills stage with the Python panel",
+        SKILLS,
+      );
     });
   });
 });
