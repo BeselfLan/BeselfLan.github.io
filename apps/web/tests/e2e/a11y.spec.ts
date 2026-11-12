@@ -427,3 +427,310 @@ test("keyboard only: the desktop's own menu", async ({ page }) => {
   await page.keyboard.press("Escape");
   await expect(contextMenu).toHaveCount(0);
 });
+
+// Motion. #24: "reduced motion is honoured everywhere". The probe reads only
+// `transform`: fades are not motion, so opacity is free. It fires the action and
+// samples in one `page.evaluate`, because a separate `click()` can let the first
+// frames pass before sampling starts. The action is an in-page event (a click, or
+// a focus and a dispatched keydown), which React and ring.ts both accept; the
+// journeys above are the ones that press real keys.
+//
+// Three correct paths still change a transform as a jump, so there are two
+// checks, not one:
+// - still: one value from the first sample that has the element. The window
+//   surfaces, the detail panel, the Skills panel, the top bar, the dock and the
+//   toast.
+// - jump: two values in a row, the start and the end, with nothing between.
+//   The ring's rotation on ArrowRight (ring.ts snaps inside its key handler),
+//   and the stage's translateX when the panel opens (Carousel sets
+//   `transition: none`). The lid and the camera during lid-opening are "at most
+//   two values, ending at none": motion writes the instant pose on its next
+//   frame.
+// A tween gives three or more values, and so does the window's .96 scale-in.
+
+type Act = { click: string } | { key: string; on: string };
+
+/** One selector's transform at the start and on each of the next frames. */
+async function probe(
+  page: Page,
+  act: Act,
+  targets: string[],
+  frames = 8,
+): Promise<Record<string, (string | null)[]>> {
+  return page.evaluate(
+    async ({ act, targets, frames }) => {
+      const IDENTITY = [
+        "none",
+        "matrix(1, 0, 0, 1, 0, 0)",
+        "matrix3d(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)",
+      ];
+      const read = () =>
+        targets.map((sel) => {
+          const el = document.querySelector(sel);
+          if (!el) return null;
+          const t = getComputedStyle(el).transform;
+          return IDENTITY.includes(t) ? "none" : t;
+        });
+      const rows = [read()];
+      const sel = "click" in act ? act.click : act.on;
+      const el = document.querySelector<HTMLElement>(sel);
+      if (!el) throw new Error(`probe: nothing matches ${sel}`);
+      if ("click" in act) {
+        el.click();
+      } else {
+        el.focus();
+        el.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: act.key,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      }
+      for (let i = 0; i < frames; i++) {
+        await new Promise(requestAnimationFrame);
+        rows.push(read());
+      }
+      return Object.fromEntries(
+        targets.map((sel, j) => [sel, rows.map((r) => r[j])]),
+      );
+    },
+    { act, targets, frames },
+  );
+}
+
+/** The values with the nulls dropped, and each one equal to the one before dropped. */
+const runs = (values: (string | null)[]) =>
+  values
+    .filter((v): v is string => v !== null)
+    .filter((v, i, all) => i === 0 || v !== all[i - 1]);
+
+const show = (values: (string | null)[]) => JSON.stringify(values);
+
+function expectStill(values: (string | null)[], label: string) {
+  expect(values.at(-1), `${label} is missing: ${show(values)}`).not.toBeNull();
+  expect(runs(values), `${label} moved: ${show(values)}`).toHaveLength(1);
+}
+
+function expectJump(values: (string | null)[], label: string) {
+  expect(values.at(-1), `${label} is missing: ${show(values)}`).not.toBeNull();
+  expect(
+    runs(values),
+    `${label} did not jump, or tweened: ${show(values)}`,
+  ).toHaveLength(2);
+}
+
+function expectMoves(values: (string | null)[], label: string) {
+  expect(
+    runs(values).length,
+    `${label} did not move: ${show(values)}`,
+  ).toBeGreaterThanOrEqual(3);
+}
+
+// The boot, the bar and the dock are not started by anything a test does, so a
+// recorder runs from the first moment of the load, one row per animation frame.
+// It is passed to `page.addInitScript`, so it must not use anything outside it.
+interface MotionRow {
+  /** data-boot-stage, or null. */
+  stage: string | null;
+  lid: string | null;
+  camera: string | null;
+  topbar: string | null;
+  dock: string | null;
+  toast: string | null;
+}
+type Recorded = Window & { __motion?: { rows: MotionRow[]; done: boolean } };
+
+function recordMotion(): void {
+  const IDENTITY = [
+    "none",
+    "matrix(1, 0, 0, 1, 0, 0)",
+    "matrix3d(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)",
+  ];
+  const transformOf = (selector: string): string | null => {
+    const el = document.querySelector(selector);
+    if (!el) return null;
+    const t = getComputedStyle(el).transform;
+    return IDENTITY.includes(t) ? "none" : t;
+  };
+  const rows: MotionRow[] = [];
+  const state = { rows, done: false };
+  (window as unknown as Recorded).__motion = state;
+  // It stops 120 frames after the top bar first appears, or at 1500 rows.
+  let sinceBar = -1;
+  const tick = () => {
+    const topbar = transformOf("[data-topbar]");
+    if (topbar !== null) sinceBar += 1;
+    rows.push({
+      stage:
+        document
+          .querySelector("[data-boot-stage]")
+          ?.getAttribute("data-boot-stage") ?? null,
+      lid: transformOf("[data-laptop-lid]"),
+      camera: transformOf("[data-laptop-camera]"),
+      topbar,
+      dock: transformOf("[data-dock]"),
+      toast: transformOf("[data-toast]"),
+    });
+    if (sinceBar >= 120 || rows.length >= 1500) {
+      state.done = true;
+      return;
+    }
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+
+/** Loads `/?boot=full` with the recorder running, and gives its rows. */
+async function recordFullBoot(page: Page): Promise<MotionRow[]> {
+  await page.addInitScript(recordMotion);
+  await page.goto("/?boot=full");
+  await page.waitForFunction(
+    () => (window as unknown as Recorded).__motion?.done === true,
+    undefined,
+    { timeout: 30_000 },
+  );
+  return page.evaluate(() => (window as unknown as Recorded).__motion!.rows);
+}
+
+/** One column of the rows, with null where the element was not there. */
+const column = (rows: MotionRow[], key: keyof Omit<MotionRow, "stage">) =>
+  rows.map((r) => r[key]);
+
+const surfaceOf = (id: string) => `[data-window-id="${id}"] > div`;
+
+test.describe("nothing moves under reduced motion", () => {
+  test.use({ reducedMotion: "reduce" });
+
+  // This test scans the toast, so it sets no welcomed flag.
+  test("the boot, the bar, the dock and the welcome", async ({ page }) => {
+    const rows = await recordFullBoot(page);
+
+    // The lid and the camera, up to the end of lid-opening.
+    const last = rows.findLastIndex((r) => r.stage === "lid-opening");
+    expect(last, "no row has the lid-opening stage").toBeGreaterThanOrEqual(0);
+    const opening = rows.slice(0, last + 1);
+    for (const key of ["lid", "camera"] as const) {
+      const seen = runs(column(opening, key));
+      expect(seen.length, `${key}: ${show(seen)}`).toBeLessThanOrEqual(2);
+      expect(seen.at(-1), `${key} does not end flat: ${show(seen)}`).toBe(
+        "none",
+      );
+    }
+
+    // The bar, the dock and the toast, for as long as they are there.
+    for (const [key, min] of [
+      ["topbar", 30],
+      ["dock", 30],
+      ["toast", 8],
+    ] as const) {
+      const present = column(rows, key).filter((v) => v !== null);
+      expect(
+        present.length,
+        `${key} was seen in few frames`,
+      ).toBeGreaterThanOrEqual(min);
+      expectStill(present, key);
+    }
+  });
+
+  test("windows, Projects and Skills", async ({ page }) => {
+    await openDesktop(page);
+
+    // Opening Projects from the dock.
+    const projects = surfaceOf("projects");
+    expectStill(
+      (await probe(page, { click: '[data-dock-app="projects"]' }, [projects]))[
+        projects
+      ],
+      "Projects' surface opening",
+    );
+    await expect(page.locator("[data-entry-id]").first()).toBeVisible({
+      timeout: 15_000,
+    });
+
+    // ArrowRight on the ring.
+    const front = "[data-carousel] [data-front]";
+    const ring = "[data-carousel-ring]";
+    expectJump(
+      (await probe(page, { key: "ArrowRight", on: front }, [ring]))[ring],
+      "the ring turning",
+    );
+
+    // Selecting the front item: the panel is still, and the stage steps aside.
+    const panel = "[data-detail-panel]";
+    const stage = "[data-carousel]";
+    const selected = await probe(page, { click: front }, [panel, stage]);
+    expectStill(selected[panel], "the detail panel opening");
+    expectJump(selected[stage], "the stage making room");
+
+    // Opening Skills: the list is the default, so there are cards and no icons.
+    const skills = surfaceOf("skills");
+    expectStill(
+      (await probe(page, { click: '[data-dock-app="skills"]' }, [skills]))[
+        skills
+      ],
+      "Skills' surface opening",
+    );
+    await expect(page.locator("[data-skill-card]").first()).toBeVisible();
+    await expect(page.locator("[data-skill-id]")).toHaveCount(0);
+
+    const skillPanel = "[data-skill-panel]";
+    expectStill(
+      (
+        await probe(page, { click: '[data-skill-card="python"]' }, [skillPanel])
+      )[skillPanel],
+      "Skills' panel opening",
+    );
+
+    // Minimising Projects.
+    expectStill(
+      (
+        await probe(
+          page,
+          { click: '[data-window-id="projects"] [aria-label="Minimise"]' },
+          [projects],
+        )
+      )[projects],
+      "Projects' surface minimising",
+    );
+    await expect(frame(page, "projects")).toBeHidden();
+  });
+});
+
+// The control: the probe and the recorder can each report movement, so the
+// "still" results above mean something. Motion is allowed, which is the
+// default here.
+test("the probe sees motion when it is allowed", async ({ page }) => {
+  await openDesktop(page);
+  const projects = surfaceOf("projects");
+  expectMoves(
+    (await probe(page, { click: '[data-dock-app="projects"]' }, [projects]))[
+      projects
+    ],
+    "Projects' surface opening",
+  );
+  await expect(page.locator("[data-entry-id]").first()).toBeVisible({
+    timeout: 15_000,
+  });
+  const ring = "[data-carousel-ring]";
+  expectMoves(
+    (
+      await probe(
+        page,
+        { key: "ArrowRight", on: "[data-carousel] [data-front]" },
+        [ring],
+      )
+    )[ring],
+    "the ring turning",
+  );
+
+  // A forced full boot, though this tab has booted already.
+  const rows = await recordFullBoot(page);
+  const last = rows.findLastIndex((r) => r.stage === "lid-opening");
+  expect(last, "no row has the lid-opening stage").toBeGreaterThanOrEqual(0);
+  expectMoves(column(rows.slice(0, last + 1), "lid"), "the lid opening");
+  expectMoves(
+    column(rows, "topbar").filter((v) => v !== null),
+    "the top bar entering",
+  );
+});
