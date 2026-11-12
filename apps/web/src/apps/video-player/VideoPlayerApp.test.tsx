@@ -131,6 +131,9 @@ const stateOf = () =>
     .querySelector("[data-video-state]")
     ?.getAttribute("data-video-state");
 const video = () => document.querySelector("video");
+const status = () =>
+  document.querySelector<HTMLElement>("[data-video-status]")!;
+const retryButton = () => screen.getByRole("button", { name: "Retry" });
 const sources = () => [...document.querySelectorAll("source")];
 
 // Mounts the player and lets the resolve answer, so it is ready.
@@ -153,10 +156,64 @@ describe("the states", () => {
     await flush();
 
     expect(stateOf()).toBe("loading");
-    expect(document.querySelector('[aria-busy="true"]')).not.toBeNull();
+    // The sentence lives in the status line, which is always there: aria-busy
+    // on an ancestor would tell screen readers to hold its updates.
+    expect(status().textContent).toBe("Loading the demo...");
+    expect(document.querySelector('[aria-busy="true"]')).toBeNull();
     expect(screen.getByText("Loading the demo...")).not.toBeNull();
     // The video must not render before its sources exist.
     expect(video()).toBeNull();
+  });
+
+  it("one status region from the first render", async () => {
+    const pending = deferred<ResolvedMedia | null>();
+    const { api } = makeApi(() => pending.promise);
+    render(ui(api));
+
+    // Before any answer, and before any microtask: the region is already
+    // there with its text. A live region that appears with its text is often
+    // not announced.
+    const regions = screen.getAllByRole("status");
+    expect(regions).toHaveLength(1);
+    const region = regions[0];
+    expect(region.textContent).toBe("Loading the demo...");
+    await flush();
+
+    await act(async () => {
+      pending.resolve(null);
+    });
+    await flush();
+    expect(stateOf()).toBe("offline");
+    // The same node, with the new sentence.
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(screen.getByRole("status")).toBe(region);
+    expect(region.textContent).toBe("Demo offline");
+  });
+
+  it("the status line is empty while the video plays", async () => {
+    const { api } = makeApi();
+    await ready(api);
+    const region = screen.getByRole("status");
+    expect(region.textContent).toBe("");
+    // Out of the layout, so the video keeps its whole box.
+    expect(region.classList.contains("sr-only")).toBe(true);
+  });
+
+  it("the status line says there is no demo, and says a video failed", async () => {
+    const { api } = makeApi();
+    const none = render(ui(api, { projectId: "tetris-asm" }));
+    await flush();
+    expect(screen.getByRole("status").textContent).toBe(
+      "This project has no demo.",
+    );
+    none.unmount();
+
+    await ready(api);
+    fireEvent.error(video()!);
+    expect(screen.getByRole("status").textContent).toBe(
+      "This demo could not load.",
+    );
+    expect(screen.getAllByRole("status")).toHaveLength(1);
   });
 
   it("the video, with its sources in order", async () => {
@@ -266,6 +323,113 @@ describe("Demo offline", () => {
     expect(stateOf()).toBe("ready");
     expect(video()).not.toBeNull();
     expect(media.resolve).toHaveBeenCalledTimes(2);
+  });
+
+  describe("Retry keeps focus", () => {
+    // Retry unmounts while the next attempt loads, so focus left on it would
+    // drop to the page. jsdom does not focus on a click, so each test focuses
+    // the button first, as the visitor's Tab or press does.
+
+    it("Retry keeps focus", async () => {
+      const second = deferred<ResolvedMedia | null>();
+      const { api, media } = makeApi();
+      media.resolve
+        .mockImplementationOnce(() => Promise.resolve(null))
+        .mockImplementationOnce(() => second.promise);
+      render(ui(api));
+      await flush();
+      expect(stateOf()).toBe("offline");
+
+      const old = retryButton();
+      act(() => old.focus());
+      expect(document.activeElement).toBe(old);
+      fireEvent.click(old);
+      await flush();
+      // While loading the button is gone, and focus is on the status line.
+      expect(stateOf()).toBe("loading");
+      expect(old.isConnected).toBe(false);
+      expect(document.activeElement).toBe(status());
+
+      // Offline again: focus is on the new Retry.
+      await act(async () => {
+        second.resolve(null);
+      });
+      await flush();
+      expect(stateOf()).toBe("offline");
+      expect(retryButton()).not.toBe(old);
+      expect(document.activeElement).toBe(retryButton());
+    });
+
+    it("goes to the video when the retry answers ready", async () => {
+      const { api, media } = makeApi();
+      media.resolve.mockImplementationOnce(() => Promise.resolve(null));
+      render(ui(api));
+      await flush();
+
+      act(() => retryButton().focus());
+      // jsdom will not focus a <video> that has no tabindex, and giving it one
+      // would change #102's walk through native controls. So the call is the
+      // proof here, and the e2e test is the proof in a browser.
+      const focus = vi.spyOn(HTMLElement.prototype, "focus");
+      fireEvent.click(retryButton());
+      await flush();
+      expect(stateOf()).toBe("ready");
+
+      const onVideo = focus.mock.contexts.some(
+        (el, i) => el === video() && focus.mock.calls[i][0]?.preventScroll,
+      );
+      expect(onVideo).toBe(true);
+    });
+
+    it("a retry that plays and then fails lands on Retry", async () => {
+      const { api, media } = makeApi();
+      media.resolve.mockImplementationOnce(() => Promise.resolve(null));
+      render(ui(api));
+      await flush();
+
+      act(() => retryButton().focus());
+      fireEvent.click(retryButton());
+      await flush();
+      expect(stateOf()).toBe("ready");
+
+      // A source can fail after the video mounted. Removing the focused video
+      // leaves focus on the page, which is what the browser does here.
+      act(() => (document.activeElement as HTMLElement).blur());
+      expect(document.activeElement).toBe(document.body);
+      fireEvent.error(video()!);
+      expect(stateOf()).toBe("error");
+      expect(document.activeElement).toBe(retryButton());
+    });
+
+    it("focus the visitor moved is left alone", async () => {
+      const second = deferred<ResolvedMedia | null>();
+      const { api, media } = makeApi();
+      media.resolve
+        .mockImplementationOnce(() => Promise.resolve(null))
+        .mockImplementationOnce(() => second.promise);
+      render(
+        <>
+          <button>elsewhere</button>
+          {ui(api)}
+        </>,
+      );
+      await flush();
+
+      act(() => retryButton().focus());
+      fireEvent.click(retryButton());
+      await flush();
+      expect(stateOf()).toBe("loading");
+
+      // The visitor moves on while the attempt loads.
+      const elsewhere = screen.getByRole("button", { name: "elsewhere" });
+      act(() => elsewhere.focus());
+      await act(async () => {
+        second.resolve(null);
+      });
+      await flush();
+      expect(stateOf()).toBe("offline");
+      expect(document.activeElement).toBe(elsewhere);
+    });
   });
 
   it("a failed resolve is offline: it rejects", async () => {
