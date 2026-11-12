@@ -32,6 +32,17 @@ function listed(dir: string): string[] {
   return run.stdout.split("\n").filter((f) => f !== "");
 }
 
+// A host name: a dotted name that ends in a common top-level domain. The g flag
+// is for String.prototype.match, so never use it with test().
+const domain =
+  /\b[a-z0-9-]+(\.[a-z0-9-]+)*\.(com|net|org|io|dev|app|ca|co|me|xyz|cloud|site)\b/gi;
+
+// Every KEY= line of deploy/.env.example. COMPOSE_FILE is commented out there,
+// so it is not one of them.
+const envKeys = [...read("deploy/.env.example").matchAll(/^([A-Z_]+)=/gm)].map(
+  (m) => m[1],
+);
+
 // `docker compose config` only reads files, so it needs no daemon.
 const composeAvailable =
   spawnSync("docker", ["compose", "version"], { stdio: "ignore" }).status === 0;
@@ -814,8 +825,6 @@ describe("the site's headers", () => {
 });
 
 describe("no domain is hard-coded", () => {
-  const domain =
-    /\b[a-z0-9-]+(\.[a-z0-9-]+)*\.(com|net|org|io|dev|app|ca|co|me|xyz|cloud|site)\b/gi;
   const matches = (file: string) => read(file).match(domain) ?? [];
 
   // apt's package for Docker Engine, not a host.
@@ -864,9 +873,6 @@ describe("no domain is hard-coded", () => {
   });
 
   it("deploy/.env.example documents every variable the stack reads", () => {
-    const keys = [...read("deploy/.env.example").matchAll(/^([A-Z_]+)=/gm)].map(
-      (m) => m[1],
-    );
     const used = new Set(
       readdirSync(join(root, "deploy"))
         .filter((f) => /^docker-compose.*\.yml$/.test(f))
@@ -874,7 +880,7 @@ describe("no domain is hard-coded", () => {
         .map((m) => m[1]),
     );
     expect(used.has("EDGE_NETWORK")).toBe(true);
-    for (const name of used) expect(keys).toContain(name);
+    for (const name of used) expect(envKeys).toContain(name);
   });
 
   it("deploy/.env.example keeps COMPOSE_FILE commented out", () => {
