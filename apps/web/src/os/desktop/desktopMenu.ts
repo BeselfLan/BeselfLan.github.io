@@ -26,6 +26,36 @@ export function nextWallpaper(current: Settings["wallpaper"]) {
 }
 
 /**
+ * Whether a `contextmenu` that reached the document is the keyboard's, and
+ * should open the desktop's menu. Shift+F10 and the Menu key, with nothing
+ * focused, fire it at the body, as the listener first assumed. In Chromium
+ * (#158) they fire it at the element under the viewport's top-left corner
+ * instead, with `button` -1 (no button), while a mouse right-click has 2.
+ *
+ * So it opens for the body, or for a button-less event with nothing focused
+ * (a focused control has a menu of its own, and a window's content is a
+ * mouse's). A touch or pen pointer never opens it. `detail` and `buttons` are
+ * not read: `button` names the source, and the others are no surer a tell.
+ * It takes plain fields, so a test needs no PointerEvent. This one function
+ * reads `document.body`, so it is the exception to "no DOM" above.
+ */
+export function opensDesktopMenu(
+  e: Pick<MouseEvent, "target" | "button" | "defaultPrevented"> & {
+    pointerType?: string;
+  },
+  active: Element | null,
+): boolean {
+  if (e.defaultPrevented) return false;
+  if (e.target === document.body) return true;
+  return (
+    e.button === -1 &&
+    (active === null || active === document.body) &&
+    e.pointerType !== "touch" &&
+    e.pointerType !== "pen"
+  );
+}
+
+/**
  * Change Background... (it moves to the next wallpaper; there is no picker
  * yet), Display Settings, and Open in Terminal, which stays disabled until an
  * app with the id "terminal" exists. Then the items apps registered for

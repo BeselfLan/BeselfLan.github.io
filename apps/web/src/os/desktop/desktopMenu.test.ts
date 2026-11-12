@@ -8,7 +8,12 @@ import {
   setupBrowser,
   teardownBrowser,
 } from "../../../tests/unit/window/mountLayer";
-import { DISPLAY_NOTICE, desktopMenu, nextWallpaper } from "./desktopMenu";
+import {
+  DISPLAY_NOTICE,
+  desktopMenu,
+  nextWallpaper,
+  opensDesktopMenu,
+} from "./desktopMenu";
 
 // Extension items registered by a test come off in afterEach: the registry is
 // module level.
@@ -169,4 +174,115 @@ describe("desktopMenu", () => {
       expect(desktopMenu()).toHaveLength(3);
     });
   });
+});
+
+describe("opensDesktopMenu", () => {
+  // A detached div stands in for the laptop's root, which is what Chromium
+  // sends a keyboard `contextmenu` to (#158). jsdom has no PointerEvent, so
+  // the decision takes plain fields.
+  const desk = document.createElement("div");
+  const windowContent = document.createElement("div");
+  let focused: HTMLButtonElement;
+  beforeEach(() => {
+    focused = document.createElement("button");
+    document.body.append(focused);
+    focused.focus();
+  });
+  afterEach(() => focused.remove());
+
+  const body = () => document.body;
+  const onDesk = () => desk;
+  const onWindow = () => windowContent;
+  const nothing = () => null;
+  const control = () => focused;
+  type Row = [
+    name: string,
+    target: () => Element,
+    button: number,
+    pointerType: string | undefined,
+    active: () => Element | null,
+    defaultPrevented: boolean,
+    opens: boolean,
+  ];
+  const rows: Row[] = [
+    ["the body, as v2 handled it", body, 0, undefined, body, false, true],
+    ["the body, already handled", body, 0, undefined, body, true, false],
+    [
+      "Chromium's key: no button, at another element",
+      onDesk,
+      -1,
+      "mouse",
+      body,
+      false,
+      true,
+    ],
+    [
+      "a key with no pointer type and no active element",
+      onDesk,
+      -1,
+      undefined,
+      nothing,
+      false,
+      true,
+    ],
+    [
+      "a key with a control focused: that control's own menu",
+      onDesk,
+      -1,
+      "mouse",
+      control,
+      false,
+      false,
+    ],
+    [
+      "a key that a handler already took",
+      onDesk,
+      -1,
+      "mouse",
+      body,
+      true,
+      false,
+    ],
+    [
+      "a mouse right-click outside the screen",
+      onDesk,
+      2,
+      "mouse",
+      body,
+      false,
+      false,
+    ],
+    [
+      "a mouse right-click on a window",
+      onWindow,
+      2,
+      "mouse",
+      body,
+      false,
+      false,
+    ],
+    [
+      "fireEvent's default button on a window",
+      onWindow,
+      0,
+      undefined,
+      body,
+      false,
+      false,
+    ],
+    ["no button from a touch", onDesk, -1, "touch", body, false, false],
+    ["no button from a pen", onDesk, -1, "pen", body, false, false],
+  ];
+
+  it.each(rows)(
+    "%s",
+    (_name, target, button, pointerType, active, defaultPrevented, opens) => {
+      expect(
+        opensDesktopMenu(
+          { target: target(), button, pointerType, defaultPrevented },
+          active(),
+        ),
+      ).toBe(opens);
+    },
+  );
 });
