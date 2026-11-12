@@ -7,7 +7,7 @@ Commands say where they run. "Workstation" is your own machine, in a checkout of
 ## 1. Before you start
 
 **You need:**
-- an Ubuntu 24.04 or later VPS with at least 1 GB of RAM (the three containers are capped at 448 MB together);
+- an Ubuntu 24.04 or later VPS with at least 1 GB of RAM (256 MB for the API, 128 MB for Caddy, and 64 MB for the site in (b));
 - a domain you can add DNS records to;
 - an SSH key pair for the deploy user;
 - optionally, a Resend account, for the contact form's mail;
@@ -97,7 +97,7 @@ Bootstrap prepares a fresh Ubuntu VPS. Run it once as root.
 rsync -a --exclude=.env --exclude=/media deploy/ root@vps.example.com:/srv/beselfos/
 ```
 
-**Workstation:** run the script on the VPS with your public key. It must be one line that starts with `ssh-`, `ecdsa-` or `sk-`.
+**Workstation:** run the script on the VPS with your public key. It must be one line that starts with `ssh-`, `ecdsa-` or `sk-`. If `sshd` listens on a port other than 22, add `SSH_PORT=<port>` beside `DEPLOY_SSH_KEY`. On the VPS, `sshd -T | grep '^port '` shows the port.
 
 ```sh
 ssh root@vps.example.com "DEPLOY_SSH_KEY='$(cat ~/.ssh/id_ed25519.pub)' /srv/beselfos/vps-bootstrap.sh"
@@ -114,7 +114,7 @@ The file belongs to `deploy` and has mode `-rw-------`.
 **What it does.** Each step checks first and prints `ok:` or `changed:`:
 - installs Docker Engine and the Compose plugin from the Ubuntu archive, if they are missing, and refuses a Compose older than 2.24.4;
 - makes the group `docker` and the user `deploy`, puts `deploy` in that group, and adds your key to its `authorized_keys`. A user in the `docker` group can become root on the host, so guard that key;
-- installs `ufw` if needed, allows the SSH port, 80/tcp, 443/tcp and 443/udp, then enables it. SSH is allowed first, so enabling cannot lock you out;
+- installs `ufw` if needed, allows `SSH_PORT` (default 22), 80/tcp, 443/tcp and 443/udp, then enables it. SSH is allowed first, so enabling cannot lock you out, as long as `SSH_PORT` is the port `sshd` listens on;
 - makes `/srv/beselfos` and `/srv/beselfos/media` (mode 755), and `/srv/beselfos/.env` from `.env.example` (mode 600). It never overwrites an `.env`;
 - gives the copied files to `deploy`.
 
@@ -130,7 +130,7 @@ sshd -t && systemctl reload ssh
 sshd -T | grep -E '^(passwordauthentication|permitrootlogin)'
 ```
 
-The name starts with `10-` so that it is read before other files in that folder, and `sshd` keeps the first value it reads. **Check:** both lines print `no`. Keep your root session open until a fresh login as `deploy` works.
+The name starts with `10-` so that it is read before other files in that folder, and `sshd` keeps the first value it reads. **Check:** both lines print `no`. Keep your root session open until a fresh login as `deploy` works. Afterwards root cannot log in over SSH, and `deploy` has no sudo. Keep a sudo user, or your provider's console, for root work such as updates or running the bootstrap again.
 
 **Later syncs** run as `deploy`, with the same excludes:
 
@@ -148,14 +148,20 @@ ssh root@vps.example.com "SKIP_FIREWALL=1 DEPLOY_SSH_KEY='$(cat ~/.ssh/id_ed2551
 
 Afterwards, check that the existing firewall allows the SSH port, 80/tcp, 443/tcp and 443/udp.
 
-Override: skip the script. On the VPS, as root, make the user, the two folders and the `.env` yourself, with the script's modes:
+Override: skip the script. On the VPS, as root, make the user, its key, the two folders and the `.env` yourself, with the script's modes. The `.env` is made only if there is none, as the script does:
 
 ```sh
 useradd --create-home --shell /bin/bash deploy && usermod -aG docker deploy
+install -d -m 700 -o deploy -g deploy /home/deploy/.ssh
+echo '<your public key line>' >> /home/deploy/.ssh/authorized_keys
+chown deploy:deploy /home/deploy/.ssh/authorized_keys && chmod 600 /home/deploy/.ssh/authorized_keys
 install -d -m 755 -o deploy -g deploy /srv/beselfos /srv/beselfos/media
-install -m 600 -o deploy -g deploy /srv/beselfos/.env.example /srv/beselfos/.env
+[ -e /srv/beselfos/.env ] || install -m 600 -o deploy -g deploy /srv/beselfos/.env.example /srv/beselfos/.env
 chown -R deploy:deploy /srv/beselfos
+ls -l /srv/beselfos/.env
 ```
+
+**Check:** the last line shows `-rw-------` and the owner `deploy`.
 
 ## 4. Env
 
@@ -290,7 +296,7 @@ example.com {
 }
 ```
 
-**Way 2: the import.** Give that Caddy `BESELFOS_API_SITE` (and `BESELFOS_WEB_SITE` in (b)) in its environment, the same values as `API_SITE` and `WEB_SITE`. Mount `/srv/beselfos/edge` into it, and add `import` lines for `api.caddy` and `web.caddy` from that folder. Adding variables recreates that Caddy, which briefly drops every site on it. The gain: each sync of `deploy/` and reload keeps the block in step with the repository.
+**Way 2: the import.** Give that Caddy `BESELFOS_API_SITE` (and `BESELFOS_WEB_SITE` in (b)) in its environment, the same values as `API_SITE` and `WEB_SITE`. Mount `/srv/beselfos/edge` read-only at the same path, and add `import /srv/beselfos/edge/api.caddy` to its Caddyfile. In (b) only, add `import /srv/beselfos/edge/web.caddy` too: in (a) it would be a site block with an empty address. Adding variables recreates that Caddy, which briefly drops every site on it. The gain: each sync of `deploy/` and reload keeps the block in step with the repository.
 
 **Reload that Caddy** with its own reload command. For a Caddy in Docker that is usually this pair. A reload keeps the other sites up:
 
@@ -390,7 +396,7 @@ The API trusts exactly one proxy hop (`trust proxy` is 1 in `apps/api/src/app.ts
 
 Before you put a CDN or a second proxy in front of the API, Cloudflare's included, make two changes together:
 
-1. **Caddy:** in the front Caddy's global options, set `servers { trusted_proxies static <the CDN's published IP ranges> }`. The stock `caddy:2-alpine` has no Cloudflare module, so write the ranges out, from Cloudflare's published IP ranges. On a shared Caddy this applies to every site on it.
+1. **Caddy:** in the front Caddy's global options, set `servers { trusted_proxies static <the CDN's published IP ranges> }`. The stock `caddy:2-alpine` has no Cloudflare module, so write the ranges out, from Cloudflare's published IP ranges. On a shared Caddy this applies to every site on it. To link that page instead, first add Cloudflare's own host name to the vendor hosts that the "names no real host" test allows.
 2. **The API:** it must count two hops (`trust proxy` in `apps/api/src/app.ts`). This runbook does not change code. Open a backend-infra issue for it.
 
 Either one alone changes nothing: every visitor still looks like the CDN's address, and shares one rate limit.
@@ -433,19 +439,15 @@ Run these from the workstation, and read each answer.
    ```
 
 5. **In a browser,** open the site, open an entry in the Projects app that has a demo, and press "Play demo". The video requests go to `api.example.com`, and the tray's network icon shows online.
-6. **Offline.** On the VPS stop the API, and reload the site: the tray shows offline, and "Play demo" is disabled with "Demo offline" in its tooltip.
+6. **Offline.** On the VPS stop the API. Reload the site and open the same entry: "Play demo" is disabled with "Demo offline" in its tooltip, and within 5 seconds the tray shows offline. (The tray stays "unknown" until the site has asked the API once.) Then start the API again and reload the site.
 
    ```sh
    cd /srv/beselfos && docker compose stop api
-   ```
-
-   Bring it back, and reload the site again:
-
-   ```sh
-   cd /srv/beselfos && docker compose start api
+   docker compose start api
    ```
 
 `deploy/smoke-web.sh` checks the offline and tray steps locally (section 15), so you need not stop production to trust them.
+
 ## 13. Rollback
 
 Set the previous tag in `/srv/beselfos/.env` (`API_IMAGE`, and `WEB_IMAGE` in (b)). The old images are still on the VPS from `docker load`. Then:
@@ -463,7 +465,7 @@ Issue #27 adds this section. Until then, deploys are by hand, as above.
 
 ## 15. Local rehearsal
 
-These three scripts prove the stack on one machine. They run under their own Compose project and one loopback port, and touch no other project, network or image. On a shared host, give each run its own `SMOKE_PROJECT` and a free `SMOKE_PORT` (1024 or above). Run them from a checkout.
+These three scripts prove the stack on one machine. Run them from a checkout. The two smoke scripts bring a stack up under their own Compose project on one loopback port, then take it down. They touch no other project or network. On a shared host, give each its own `SMOKE_PROJECT` and a free `SMOKE_PORT` (1024 or above). They build `beselfos-api:local` (and `beselfos-web:local`), the tags that section 6 copies from. Rehearse before section 6's build or after its tag step, never between them.
 
 ```sh
 SMOKE_PORT=18140 SMOKE_PROJECT=beself-rehearsal-api deploy/smoke.sh
@@ -471,6 +473,6 @@ SMOKE_PORT=18141 SMOKE_PROJECT=beself-rehearsal-web deploy/smoke-web.sh
 deploy/bootstrap-check.sh
 ```
 
-- `deploy/smoke.sh` needs Docker, ffmpeg, curl and Node, and prints `SMOKE_OK`.
-- `deploy/smoke-web.sh` also needs `npm ci` first (for Playwright's Chromium), and prints `SMOKE_WEB_OK`.
-- `deploy/bootstrap-check.sh` runs `deploy/vps-bootstrap.sh` in throwaway `ubuntu:24.04` containers with no network, and prints `BOOTSTRAP_OK`.
+- `deploy/smoke.sh` builds the API image and tests the stack with curl. It needs Docker, ffmpeg, curl and Node, and prints `SMOKE_OK`.
+- `deploy/smoke-web.sh` builds the API and site images and tests topology (b) with a browser. It also needs `npm ci` first (for Playwright's Chromium), and prints `SMOKE_WEB_OK`.
+- `deploy/bootstrap-check.sh` uses no Compose project and no port. It runs `deploy/vps-bootstrap.sh` in throwaway `ubuntu:24.04` containers (`docker run --rm`) with no network, pulls that image once, and prints `BOOTSTRAP_OK`. It builds none of your images.
