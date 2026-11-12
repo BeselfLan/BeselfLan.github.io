@@ -33,6 +33,13 @@
   --font-sans: var(--font-ui);
 }
 
+/* <main> is fixed to the viewport, so the page never scrolls. This stops
+   Android's pull-to-refresh (a reload, which reboots the OS) and iOS's bounce. */
+html,
+body {
+  overscroll-behavior: none;
+}
+
 body {
   background: var(--os-dark);
   color: var(--os-panel-fg);
