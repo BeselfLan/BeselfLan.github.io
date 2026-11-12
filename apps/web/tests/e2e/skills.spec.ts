@@ -330,3 +330,34 @@ test("reduced motion opens in list view", async ({ page }) => {
   await expect(win(page).locator("[data-skill-list]")).toBeVisible();
   await expect(win(page).locator("[data-skills-stage]")).toHaveCount(0);
 });
+
+// Takes focus off whatever has it, as a click does in Safari, which does not
+// focus a button it presses.
+const blurActive = (page: Page) =>
+  page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+
+test("a click that does not focus still lets Escape close the panel", async ({
+  page,
+}) => {
+  await openSkills(page);
+  await blurActive(page);
+  // Not `locator.click()`: the icon drifts, and a dispatched click does not
+  // focus, as in Safari. Focus stays outside the app.
+  await icon(page, "python").dispatchEvent("click");
+  await expect(panel(page)).toBeVisible();
+  await expect(panel(page)).toBeFocused();
+
+  await page.keyboard.press("Escape");
+  await expect(panel(page)).toHaveCount(0);
+  await expect(win(page)).toBeVisible();
+  await expect(icon(page, "python")).toBeFocused();
+});
+
+test("a deep link to a skill starts with focus in the panel", async ({
+  page,
+}) => {
+  // The window's own title bar may hold focus first (focus follows the window,
+  // #146). It is outside the app, so the panel takes it when the app mounts.
+  await openSkills(page, "&item=python");
+  await expect(panel(page)).toBeFocused({ timeout: 10_000 });
+});
