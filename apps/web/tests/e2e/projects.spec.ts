@@ -699,6 +699,86 @@ test("one window per demo, and two demos side by side", async ({ page }) => {
   );
 });
 
+// Keyboard reach and focus (#147).
+
+const activeInPanel = (page: Page) =>
+  page.evaluate(() => !!document.activeElement?.closest("[data-detail-panel]"));
+
+test("a click that does not focus still lets Escape close the panel", async ({
+  page,
+}) => {
+  // Safari does not focus a button on click (#90, #117). A dispatched click
+  // selects the item and moves no focus, as that does.
+  await openProjects(page);
+  await page.evaluate(() =>
+    (document.activeElement as HTMLElement | null)?.blur(),
+  );
+  await inFront(page).dispatchEvent("click");
+
+  await expect(panel(page)).toBeVisible();
+  // The panel took focus, so a key reaches the app.
+  await expect.poll(() => activeInPanel(page)).toBe(true);
+
+  await page.keyboard.press("Escape");
+  await expect(panel(page)).toHaveCount(0);
+  await expect(inFront(page)).toBeFocused();
+});
+
+test("a deep link to an item starts with focus in the panel", async ({
+  page,
+}) => {
+  // Before the desktop moves focus into a window, focus is on the page; after
+  // it, on the window's title bar. Either way it is outside the app, and the
+  // panel takes it.
+  await openProjects(page, "&item=tetris-asm");
+  await expect(panel(page)).toBeVisible();
+  await expect(panel(page)).toBeFocused();
+});
+
+test("the keyboard reaches the offline Play", async ({ page }) => {
+  await routeManifest(page, []);
+  await openProjects(page, "&item=deadknight");
+  await expect(play(page)).toHaveAttribute("data-media", "offline", {
+    timeout: 15_000,
+  });
+
+  // The panel has focus, so Play is a few presses away.
+  const onPlay = () =>
+    play(page).evaluate((el) => el === document.activeElement);
+  for (let i = 0; i < 30 && !(await onPlay()); i++) {
+    await page.keyboard.press("Tab");
+  }
+  await expect(play(page)).toBeFocused();
+  await expect(page.getByRole("tooltip")).toHaveText("Demo offline");
+  // aria-disabled, which Playwright counts: it is not the `disabled` attribute.
+  await expect(play(page)).toBeDisabled();
+  await expect(play(page)).toHaveAttribute("aria-disabled", "true");
+});
+
+test("Retry keeps keyboard focus in the demo window", async ({ page }) => {
+  await routeManifest(page, FIXTURE_MANIFEST);
+  await openProjects(page, "&item=deadknight");
+  await expect(play(page)).toHaveAttribute("data-media", "ready", {
+    timeout: 15_000,
+  });
+  await play(page).click();
+
+  // The fixture source always fails, so each attempt goes loading, ready, then
+  // error: the video takes focus when it is ready, and its removal drops focus
+  // to the page. Retry has to get it back.
+  const demo = player(page, "deadknight");
+  const failed = demo.locator('[data-video-state="error"]');
+  await expect(failed).toBeVisible({ timeout: 15_000 });
+  const old = failed.getByRole("button", { name: "Retry", exact: true });
+  await old.evaluate((el) => el.setAttribute("data-old", ""));
+  await old.focus();
+  await page.keyboard.press("Enter");
+
+  await expect(
+    demo.locator('[data-video-state="error"] button:not([data-old])'),
+  ).toBeFocused({ timeout: 15_000 });
+});
+
 // The committed demos (#119). These tests route nothing: the server answers
 // for the files in public/media, and the player plays them. Playwright's
 // Chromium has no H.264, so it plays the WebM, which the manifest lists first.
