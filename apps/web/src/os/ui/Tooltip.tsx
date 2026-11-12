@@ -9,7 +9,7 @@ import {
   type ReactElement,
 } from "react";
 import { createPortal } from "react-dom";
-import { useScreen } from "../screen/Screen";
+import { useOptionalScreen } from "../screen/Screen";
 import {
   usePlacement,
   type AnchorRect,
@@ -20,7 +20,16 @@ export interface TooltipProps extends PlacementOptions {
   label: string;
   /** Hover waits this long, in ms. Keyboard focus shows at once. */
   delay?: number;
-  /** One control. A disabled `Button` works: it ignores the pointer, so the wrapper hears the hover. */
+  /**
+   * While true the tooltip never shows. The control stays the same element, so
+   * a caller can keep one control while the reason for the tooltip comes and goes.
+   */
+  disabled?: boolean;
+  /**
+   * One control. A disabled `Button` works: it ignores the pointer, so the
+   * wrapper hears the hover. So does one with `aria-disabled`, which keeps
+   * keyboard focus as well.
+   */
   children: ReactElement<{ "aria-describedby"?: string }>;
 }
 
@@ -46,16 +55,22 @@ function TooltipBody({
   );
 }
 
-/** A label for a control: shown on hover and on keyboard focus. */
+/**
+ * A label for a control: shown on hover and on keyboard focus. Outside a
+ * `Screen` it has nowhere to portal to, so it renders its control and never
+ * shows.
+ */
 export function Tooltip({
   label,
   delay = 400,
   side = "top",
   align = "center",
   gap,
+  disabled = false,
   children,
 }: TooltipProps) {
-  const { portalTarget } = useScreen();
+  const screen = useOptionalScreen();
+  const portalTarget = screen?.portalTarget ?? null;
   const id = useId();
   const wrapRef = useRef<HTMLSpanElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -80,7 +95,10 @@ export function Tooltip({
     setAnchor(null);
   };
 
-  const shown = anchor !== null && portalTarget !== null;
+  // Derived, not synced by an effect: pointer leave and blur already clear the
+  // anchor, so a tooltip returns after re-enabling only while the pointer or
+  // focus is still on the control.
+  const shown = !disabled && anchor !== null && portalTarget !== null;
   const described = [children.props["aria-describedby"], id]
     .filter(Boolean)
     .join(" ");

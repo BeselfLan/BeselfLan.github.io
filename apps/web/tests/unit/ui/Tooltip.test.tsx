@@ -6,7 +6,11 @@ import { Tooltip, type TooltipProps } from "@/os/ui/Tooltip";
 import { setupFakeScreen } from "./fakeScreen";
 
 const fake = vi.hoisted(() => ({ value: undefined as unknown as ScreenValue }));
-vi.mock("@/os/screen/Screen", () => ({ useScreen: () => fake.value }));
+// placement.ts still reads useScreen once a tooltip shows, so both are here.
+vi.mock("@/os/screen/Screen", () => ({
+  useScreen: () => fake.value,
+  useOptionalScreen: () => fake.value,
+}));
 setupFakeScreen(fake);
 
 beforeEach(() => {
@@ -145,6 +149,48 @@ describe("Tooltip showing", () => {
     fireEvent.pointerEnter(button());
     wait(400);
     expect(tip()?.textContent).toBe("Soon");
+  });
+});
+
+describe("Tooltip disabled", () => {
+  it("disabled never shows", () => {
+    render(ui({ disabled: true }));
+    focus();
+    expect(tip()).toBeNull();
+    expect(button().hasAttribute("aria-describedby")).toBe(false);
+    blur();
+    fireEvent.pointerEnter(button());
+    wait(1000);
+    expect(tip()).toBeNull();
+    expect(button().hasAttribute("aria-describedby")).toBe(false);
+  });
+
+  it("switching disabled on hides it", () => {
+    const { rerender } = render(ui());
+    focus();
+    expect(tip()).not.toBeNull();
+    expect(button().getAttribute("aria-describedby")).toBe(tip()?.id);
+
+    rerender(ui({ disabled: true }));
+    expect(tip()).toBeNull();
+    expect(button().hasAttribute("aria-describedby")).toBe(false);
+  });
+
+  it("the control stays the same element", () => {
+    const { rerender } = render(ui());
+    const control = button();
+
+    // While it is shown, and while it is not.
+    focus();
+    rerender(ui({ disabled: true }));
+    expect(button()).toBe(control);
+    rerender(ui());
+    expect(button()).toBe(control);
+    blur();
+    rerender(ui({ disabled: true }));
+    expect(button()).toBe(control);
+    rerender(ui());
+    expect(button()).toBe(control);
   });
 });
 
