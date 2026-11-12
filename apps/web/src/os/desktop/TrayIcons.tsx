@@ -1,8 +1,9 @@
 import type { MediaStatus } from "@/media/provider";
 import { Icon } from "../ui/Icon";
 
-// The static battery level of the top bar (plan 4.2).
-const BATTERY_PERCENT = 87;
+// The static battery level of the top bar (plan 4.2). The tray button's name
+// repeats it, because the number is its only visible text (WCAG 2.5.3).
+export const BATTERY_PERCENT = 87;
 // Inside the outline on the 24 grid: x from 4 to 17.
 const BATTERY_INNER_WIDTH = 13;
 

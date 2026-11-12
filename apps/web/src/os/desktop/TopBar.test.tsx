@@ -48,7 +48,10 @@ function mount() {
 }
 
 const q = (selector: string) => document.querySelector<HTMLElement>(selector);
-const button = (name: string) => screen.getByRole("button", { name });
+// The tray button's name starts with "System menu" and then gives the battery,
+// whose "87%" is its visible text (WCAG 2.5.3).
+const SYSTEM_MENU = /^System menu, battery 87%$/;
+const button = (name: string | RegExp) => screen.getByRole("button", { name });
 const expanded = (el: HTMLElement) => el.getAttribute("aria-expanded");
 const focusedName = () => q("[data-focused-app]")?.textContent;
 const shell = () => useOS.getState().shell;
@@ -58,7 +61,7 @@ describe("TopBar", () => {
     mount();
     const bar = q("[data-topbar]")!;
     expect(bar.contains(button("Activities"))).toBe(true);
-    expect(bar.contains(button("System menu"))).toBe(true);
+    expect(bar.contains(button(SYSTEM_MENU))).toBe(true);
     expect(bar.contains(q("[data-clock]"))).toBe(true);
   });
 
@@ -141,7 +144,7 @@ describe("TopBar", () => {
   describe("the popover triggers", () => {
     const triggers = [
       ["the clock", () => q("[data-clock]")!, "calendar"],
-      ["the system menu", () => button("System menu"), "power"],
+      ["the system menu", () => button(SYSTEM_MENU), "power"],
     ] as const;
 
     it.each(triggers)("%s toggles its popover in the store", (_, get, id) => {
@@ -172,7 +175,7 @@ describe("TopBar", () => {
     it("moves from one popover to the other", () => {
       mount();
       fireEvent.click(q("[data-clock]")!);
-      fireEvent.click(button("System menu"));
+      fireEvent.click(button(SYSTEM_MENU));
       expect(shell().openPopover).toBe("power");
       expect(expanded(q("[data-clock]")!)).toBe("false");
     });
@@ -187,7 +190,7 @@ describe("TopBar", () => {
         "calendar",
         "Calendar and notifications",
       ],
-      ["the system menu", () => button("System menu"), "power", "System menu"],
+      ["the system menu", () => button(SYSTEM_MENU), "power", "System menu"],
     ] as const;
     const dialogNamed = (name: string) =>
       screen.queryByRole("dialog", { name });
@@ -240,7 +243,7 @@ describe("TopBar", () => {
     it("holds one popover at a time", () => {
       mount();
       open(() => q("[data-clock]")!, "calendar", "Calendar and notifications");
-      fireEvent.click(button("System menu"));
+      fireEvent.click(button(SYSTEM_MENU));
       expect(shell().openPopover).toBe("power");
       expect(dialogNamed("Calendar and notifications")).toBeNull();
       expect(dialogNamed("System menu")).not.toBeNull();
@@ -248,7 +251,7 @@ describe("TopBar", () => {
 
     it("closes the menu on Esc when the focus is on the button, too", () => {
       mount();
-      const trigger = button("System menu");
+      const trigger = button(SYSTEM_MENU);
       trigger.focus();
       fireEvent.click(trigger);
       trigger.focus();
@@ -336,7 +339,7 @@ describe("TopBar", () => {
       expect(q("[data-topbar]")!.contains(item)).toBe(true);
       expect(
         Boolean(
-          item.compareDocumentPosition(button("System menu")) &
+          item.compareDocumentPosition(button(SYSTEM_MENU)) &
           Node.DOCUMENT_POSITION_FOLLOWING,
         ),
       ).toBe(true);
@@ -372,7 +375,7 @@ describe("TopBar", () => {
 
   it("shows a static battery at 87%", () => {
     mount();
-    expect(button("System menu").textContent).toContain("87%");
+    expect(button(SYSTEM_MENU).textContent).toContain("87%");
   });
 
   describe("the slide-in", () => {

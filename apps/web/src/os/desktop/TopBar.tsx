@@ -13,7 +13,12 @@ import { CalendarPopover } from "./CalendarPopover";
 import { formatClock, useClock } from "./clock";
 import { useMediaStatus } from "./mediaStatus";
 import { PowerMenu } from "./PowerMenu";
-import { BatteryIcon, NetworkIcon, VolumeIcon } from "./TrayIcons";
+import {
+  BATTERY_PERCENT,
+  BatteryIcon,
+  NetworkIcon,
+  VolumeIcon,
+} from "./TrayIcons";
 
 // The bar is `--top-bar-h` (32) screen units tall; it slides in from above.
 const SLIDE_FROM = -32;
@@ -117,7 +122,10 @@ export function TopBar() {
           <Button
             ref={powerRef}
             variant="ghost"
-            aria-label="System menu"
+            // The visible text, "87%", must be part of the name (axe's
+            // label-content-name-mismatch, WCAG 2.5.3): a visitor who says what
+            // they see can then press it. The name still starts with the menu's.
+            aria-label={`System menu, battery ${BATTERY_PERCENT}%`}
             aria-haspopup="dialog"
             aria-expanded={openPopover === "power"}
             onClick={(e) => {

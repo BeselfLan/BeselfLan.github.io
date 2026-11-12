@@ -41,7 +41,9 @@ function openMenu() {
       <TopBar />
     </Screen>,
   );
-  const trigger = screen.getByRole("button", { name: "System menu" });
+  const trigger = screen.getByRole("button", {
+    name: /^System menu, battery 87%$/,
+  });
   trigger.focus();
   fireEvent.click(trigger);
   return trigger;
