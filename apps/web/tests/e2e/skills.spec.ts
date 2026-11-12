@@ -361,3 +361,136 @@ test("a deep link to a skill starts with focus in the panel", async ({
   await openSkills(page, "&item=python");
   await expect(panel(page)).toBeFocused({ timeout: 10_000 });
 });
+
+// What a row of controls looks like in the page: whether it scrolls, and for
+// each button its size and where it sits in the row and in the window. One
+// evaluate per row, so the numbers are of one moment.
+const measureRow = (page: Page, name: string) =>
+  win(page)
+    .getByRole("group", { name })
+    .evaluate((row) => {
+      const frame = row
+        .closest('[data-window-id="skills"]')!
+        .getBoundingClientRect();
+      const rowBox = row.getBoundingClientRect();
+      return {
+        overflowX: getComputedStyle(row).overflowX,
+        scrollWidth: row.scrollWidth,
+        clientWidth: row.clientWidth,
+        buttons: [...row.querySelectorAll("button")].map((b) => {
+          const r = b.getBoundingClientRect();
+          return {
+            text: b.textContent ?? "",
+            height: r.height,
+            above: r.top - rowBox.top,
+            below: rowBox.bottom - r.bottom,
+            before: r.left - rowBox.left,
+            insideWindow:
+              r.left >= frame.left - 1 &&
+              r.right <= frame.right + 1 &&
+              r.top >= frame.top - 1 &&
+              r.bottom <= frame.bottom + 1,
+          };
+        }),
+      };
+    });
+type RowMeasure = Awaited<ReturnType<typeof measureRow>>;
+
+// A row scrolls when it is a scroll container and its content is wider than its
+// box. Chromium's `scrollWidth` also counts overflow that is only visible, so
+// the computed `overflow-x` has to be checked too.
+const scrolls = (m: RowMeasure) =>
+  (m.overflowX === "auto" || m.overflowX === "scroll") &&
+  m.scrollWidth > m.clientWidth;
+
+// The fullscreen mode (D4): below 900 px the window is the whole screen, at
+// scale 1. Five category chips and "List view" need about 480 px, so on a phone
+// the tabs scroll sideways and "List view", the accessible fallback, stays in
+// the window.
+test.describe("a phone", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  test("the toolbar fits a phone", async ({ page }) => {
+    await openSkills(page);
+    // Past the window's enter fade, so no box is measured mid-enter.
+    await expect(win(page).locator(":scope > div")).toHaveCSS("opacity", "1");
+
+    await test.step("List view stays inside the window", async () => {
+      const edges = await win(page).evaluate((frame) => {
+        const f = frame.getBoundingClientRect();
+        const button = [...frame.querySelectorAll("button")].find(
+          (b) => b.textContent?.trim() === "List view",
+        );
+        if (!button) return null;
+        const r = button.getBoundingClientRect();
+        return {
+          left: r.left - f.left,
+          top: r.top - f.top,
+          right: f.right - r.right,
+          bottom: f.bottom - r.bottom,
+        };
+      });
+      expect(edges, "the List view button").not.toBeNull();
+      // Each is the room between the button and that edge of the window; a
+      // button past an edge has a negative one.
+      expect(
+        Math.min(...Object.values(edges!)),
+        `room at each edge: ${JSON.stringify(edges)}`,
+      ).toBeGreaterThanOrEqual(-1);
+    });
+
+    const category = await measureRow(page, "Category");
+    await test.step("the category group scrolls", () => {
+      expect(category.overflowX, "overflow-x").toMatch(/^(auto|scroll)$/);
+      expect(category.scrollWidth, "scrollWidth").toBeGreaterThan(
+        category.clientWidth,
+      );
+      expect(category.buttons.map((b) => b.text)).toEqual([
+        "All",
+        "Languages",
+        "Frameworks",
+        "Libraries",
+        "Tools",
+      ]);
+    });
+
+    await test.step("the chips have room for their focus ring", () => {
+      // A ring sits 4 px outside the chip, and a scroll container clips it.
+      for (const b of category.buttons) {
+        expect(b.above, `${b.text}: room above`).toBeGreaterThanOrEqual(3.5);
+        expect(b.below, `${b.text}: room below`).toBeGreaterThanOrEqual(3.5);
+      }
+      expect(
+        category.buttons[0].before,
+        `${category.buttons[0].text}: room before`,
+      ).toBeGreaterThanOrEqual(3.5);
+    });
+
+    await test.step("the practices row scrolls, one line a chip", async () => {
+      const practices = await measureRow(page, "Practices");
+      const one = category.buttons.find((b) => b.text === "All")!.height;
+      expect(scrolls(practices), JSON.stringify(practices)).toBe(true);
+      expect(practices.buttons.map((b) => b.text)).toEqual(PRACTICES);
+      for (const b of practices.buttons) {
+        // One line is as tall as the "All" chip; a wrapped chip is taller.
+        expect(b.height, `${b.text}: height`).toBeLessThanOrEqual(one + 1);
+        expect(
+          b.insideWindow || scrolls(practices),
+          `${b.text}: in the window, or in a row that scrolls`,
+        ).toBe(true);
+        expect(b.above, `${b.text}: room above`).toBeGreaterThanOrEqual(3.5);
+        expect(b.below, `${b.text}: room below`).toBeGreaterThanOrEqual(3.5);
+      }
+    });
+
+    await test.step("the list view and the tabs still work", async () => {
+      await win(page).getByRole("button", { name: "List view" }).click();
+      const cards = win(page).locator("[data-skill-cards] [data-skill-card]");
+      await expect(cards).toHaveCount(45);
+      // Playwright scrolls Tools into view first: it starts past the group.
+      await chip(page, "Tools").click();
+      await expect(cards).toHaveCount(17);
+      await expect(chip(page, "Tools")).toHaveAttribute("aria-pressed", "true");
+    });
+  });
+});
