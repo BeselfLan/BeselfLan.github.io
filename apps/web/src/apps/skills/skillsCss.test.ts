@@ -95,6 +95,11 @@ describe("skills.css", () => {
     }
   });
 
+  it("the focused panel draws no outline", () => {
+    // The panel takes focus from SkillsApp but is a container, not a control.
+    expect(css).toMatch(/\.skills-panel:focus\s*\{[^}]*outline:\s*none/);
+  });
+
   it("is imported by SkillsApp.tsx, the lazy chunk", () => {
     expect(read("SkillsApp.tsx")).toContain('import "./skills.css";');
     // Not by the file the first chunk loads.
