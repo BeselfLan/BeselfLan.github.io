@@ -1,0 +1,26 @@
+# How Interleave's cloud sandbox boots BeselfOS for QA runs on pull requests.
+# Only the web app runs: like the live site it has no API, so media come from
+# the static provider. Schema: https://interleave.dev/schema/interleave.json
+version: 1
+runtimes:
+  node: "24"
+services: {}
+apps:
+  web:
+    cwd: .
+    install: npm ci --no-audit --no-fund
+    build: null
+    start: npm run dev
+    port: 3000
+    role: ui
+    health:
+      path: /
+      mode: http-2xx
+      timeout: 180s
+setup: []
+env:
+  NODE_ENV: development
+  NEXT_TELEMETRY_DISABLED: "1"
+integrations: {}
+auth:
+  strategy: none
